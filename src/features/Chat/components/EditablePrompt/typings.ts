@@ -1,6 +1,6 @@
 import { Element, Text } from 'slate';
 
-import { PromptType } from '@/typings/common';
+import { PromptType, AgentStep } from '@/typings/common';
 
 export type CustomRange = {
   prismToken: string;
@@ -26,6 +26,7 @@ export interface CustomElement extends Element {
   type?: string;
   value?: string;
   url?: string;
+  title?: string;
   lang?: string;
   ordered?: boolean;
   start?: number;
@@ -34,6 +35,7 @@ export interface CustomElement extends Element {
 export interface IEditablePrompt {
   type: PromptType;
   text: string;
+  steps?: AgentStep[];
   deletePromptRow: (id: string) => () => void;
   id: string;
   handlePromptBlur: (id: string, text: string) => void;

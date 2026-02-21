@@ -1,7 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { v4 as uuidv4 } from 'uuid';
 
-import { TreeItem, TreeItems, ChatContent } from '@/typings/common';
+import { TreeItem, TreeItems, ChatContent, AgentStep } from '@/typings/common';
 
 import { findChatById } from './conversations.selectors';
 
@@ -139,6 +139,38 @@ export const conversationsSlice = createSlice({
         contentToUpdate.text = text;
       }
     },
+    appendContentById: (
+      state,
+      action: PayloadAction<{
+        chatId: string;
+        contentId: string;
+        textDelta: string;
+      }>,
+    ) => {
+      const { chatId, contentId, textDelta } = action.payload;
+      const chat = findChatById(state.conversations, chatId);
+      const content = chat?.content?.find(c => c.id === contentId);
+      if (content) {
+        content.text += textDelta;
+      }
+    },
+    addStepToContent: (
+      state,
+      action: PayloadAction<{
+        chatId: string;
+        contentId: string;
+        step: AgentStep;
+      }>,
+    ) => {
+      const { chatId, contentId, step } = action.payload;
+      const chat = findChatById(state.conversations, chatId);
+      const content = chat?.content?.find(c => c.id === contentId);
+
+      if (content) {
+        if (!content.steps) content.steps = [];
+        content.steps.push(step);
+      }
+    },
     addPromptToChat: (
       state,
       action: PayloadAction<{ chatId: string; content: ChatContent }>,
@@ -187,6 +219,8 @@ export const {
   clearConversations,
   addPromptToChat,
   updateContentById,
+  appendContentById,
+  addStepToContent,
   renameChatTreeItem,
   deleteChatTreeItem,
   updateChatTree,

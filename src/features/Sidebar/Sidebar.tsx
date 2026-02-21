@@ -1,40 +1,91 @@
 import { memo } from 'react';
 
 import classNames from 'classnames';
+import { Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { ROUTES } from '@/app/router/constants/routes';
 import { Logo } from '@/components/Logo';
 import { Logout } from '@/components/Logout';
-import { ThemeSwitcher } from '@/components/ThemeSwitcher';
 import { Conversations } from '@/features/Conversations';
+import { saveFolder } from '@/redux/conversations/conversationsSlice';
+import { useAppDispatch } from '@/redux/hooks';
 import { ButtonComponent } from '@/ui/ButtonComponent';
 import { IconComponent } from '@/ui/IconComponent';
 
 import styles from './Sidebar.module.scss';
+import { Stack } from '@mui/material';
 
 interface SidebarProps {
   className?: string;
+  onOpenSettings?: () => void;
 }
 
-export const Sidebar = memo(({ className }: SidebarProps) => {
+export const Sidebar = memo(({ className, onOpenSettings }: SidebarProps) => {
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
 
   const onClickNewChat = () => {
     navigate(ROUTES.Home);
+  };
+  
+  const onClickNewFolder = () => {
+    dispatch(saveFolder({ name: 'New Folder' }));
+  };
+
+  const onClickEditor = () => {
+    navigate(ROUTES.Editor);
   };
 
   return (
     <div className={classNames(className, styles.wrapper)}>
       <Logo />
-      <ButtonComponent onClick={onClickNewChat}>
-        <span>New Chat</span>
-        <IconComponent type="plus" className={styles.newChatIcon} />
+      
+      <Stack direction="row" spacing={1} sx={{ width: "100%" }}>
+        <ButtonComponent onClick={onClickNewChat} style={{ flex: 1, padding: "0 8px", fontSize: "0.8rem" }}>
+          <span>New Chat</span>
+          <IconComponent type="plus" className={styles.newChatIcon} style={{ width: 16, height: 16 }} />
+        </ButtonComponent>
+        
+        <ButtonComponent onClick={onClickNewFolder} style={{ flex: 1, padding: "0 8px", fontSize: "0.8rem" }}>
+          <span>New Folder</span>
+          <IconComponent type="newFolder" className={styles.newChatIcon} style={{ width: 16, height: 16 }} />
+        </ButtonComponent>
+      </Stack>
+
+      <ButtonComponent onClick={onClickEditor} style={{ marginTop: 8 }}>
+        <span>IO Editor</span>
+        <IconComponent type="edit" className={styles.newChatIcon} />
       </ButtonComponent>
       <Conversations />
       <div className={styles.bottomItems}>
-        <ThemeSwitcher />
-        <Logout />
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ flex: 1 }}>
+            <Logout />
+          </div>
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              title="Settings"
+              className={styles.settingsBtn}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '13px 11px',
+                backgroundColor: 'var(--bg-primary)',
+                border: '1px solid transparent',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                color: 'var(--text-primary)',
+                height: '100%',
+                transition: 'border 0.3s',
+              }}
+            >
+              <Settings size={20} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

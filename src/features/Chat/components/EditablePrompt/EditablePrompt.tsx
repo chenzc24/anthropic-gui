@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 
 import classNames from 'classnames';
+import { Upload } from 'lucide-react';
 import 'prismjs/themes/prism-funky.min.css';
 import markdown from 'remark-parse';
 import { remarkToSlate } from 'remark-slate-transformer';
@@ -27,6 +28,8 @@ import { unified } from 'unified';
 
 import { IconComponent } from '@/ui/IconComponent';
 
+import { uploadFile } from '@/api/files.api';
+import { AgentSteps } from './AgentSteps';
 import { CodeLeaf, decorateCodeFunc } from './parsers/code';
 import { transformResultParse } from './parsers/html';
 import { serialize } from './parsers/slate2md';
@@ -43,6 +46,7 @@ export const EditablePrompt = memo(
     handlePromptBlur,
     readOnly,
     deleteDisabled,
+    steps,
   }: IEditablePrompt) => {
     const editor = useMemo(() => withHistory(withReact(createEditor())), []);
 
@@ -57,6 +61,34 @@ export const EditablePrompt = memo(
       event.stopPropagation();
       navigator.clipboard.writeText(textToCopy);
     };
+
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleUploadClick = useCallback(() => {
+      fileInputRef.current?.click();
+    }, []);
+
+    const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      try {
+        const placeholder = `\n[Uploading ${file.name}...]`;
+        Transforms.insertText(editor, placeholder);
+        
+        const filepath = await uploadFile(file);
+        
+        Transforms.insertText(editor, `\n[File: ${filepath}]`);
+        
+      } catch (error) {
+        console.error('File upload failed:', error);
+        Transforms.insertText(editor, `\n[Error uploading ${file.name}]`);
+      } finally {
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
+    }, [editor]);
 
     const renderLeaf = useCallback(
       (props: RenderLeafProps) => <CodeLeaf {...props} />,
@@ -157,6 +189,17 @@ export const EditablePrompt = memo(
               >
                 {children}
               </a>
+            );
+          case 'image':
+            return (
+              <div {...attributes} contentEditable={false}>
+                <img
+                  src={customElement.url}
+                  alt={customElement.title || 'image'}
+                  style={{ maxWidth: '100%', borderRadius: '4px' }}
+                />
+                {children}
+              </div>
             );
           default:
             return <p {...attributes}>{children}</p>;
@@ -443,35 +486,60 @@ export const EditablePrompt = memo(
             ) : (
               <div className={styles.placeholderText}>AI</div>
             )}
-            <div
-              className={classNames(styles.iconDelete, {
-                [styles.iconDeleteDisabled]: readOnly || deleteDisabled,
-              })}
-              onClick={
-                readOnly || deleteDisabled ? undefined : deletePromptRow(id)
-              }
-            >
-              <IconComponent type="deleteIcon" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {type === 'Human' && (
+                <>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    style={{ display: 'none' }}
+                    onChange={handleFileChange}
+                  />
+                  <div
+                    className={classNames(styles.iconDelete, {
+                      [styles.iconDeleteDisabled]: readOnly,
+                    })}
+                    onClick={readOnly ? undefined : handleUploadClick}
+                    title="Upload File"
+                    style={{ cursor: readOnly ? 'not-allowed' : 'pointer' }}
+                  >
+                    <Upload size={18} />
+                  </div>
+                </>
+              )}
+              <div
+                className={classNames(styles.iconDelete, {
+                  [styles.iconDeleteDisabled]: readOnly || deleteDisabled,
+                })}
+                onClick={
+                  readOnly || deleteDisabled ? undefined : deletePromptRow(id)
+                }
+              >
+                <IconComponent type="deleteIcon" />
+              </div>
             </div>
           </div>
           {valueRef.current ? (
-            <Slate
-              editor={editor}
-              initialValue={valueRef.current}
-              onChange={onChange}
-            >
-              <Editable
-                spellCheck={false}
-                renderElement={renderElement}
-                className={styles.promptField}
-                onBlur={onBlur}
-                renderLeaf={renderLeaf}
-                decorate={decorate}
-                onKeyDown={onKeyDown}
-                readOnly={readOnly}
-                onPaste={handlePaste}
-              />
-            </Slate>
+            <>
+              {steps && steps.length > 0 && <AgentSteps steps={steps} />}
+              <Slate
+                editor={editor}
+                initialValue={valueRef.current}
+                onChange={onChange}
+              >
+                <Editable
+                  spellCheck={false}
+                  renderElement={renderElement}
+                  className={styles.promptField}
+                  onBlur={onBlur}
+                  renderLeaf={renderLeaf}
+                  decorate={decorate}
+                  onKeyDown={onKeyDown}
+                  readOnly={readOnly}
+                  onPaste={handlePaste}
+                />
+              </Slate>
+            </>
           ) : null}
         </div>
       </div>

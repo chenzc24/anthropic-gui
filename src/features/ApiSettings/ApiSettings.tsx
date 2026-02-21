@@ -1,8 +1,9 @@
 import { memo, useCallback, useMemo } from 'react';
 
-import { SelectChangeEvent, Stack } from '@mui/material';
-import classNames from 'classnames';
+import { SelectChangeEvent, Stack, Drawer, IconButton, Typography, Box } from '@mui/material';
+import { X } from 'lucide-react';
 
+import { ThemeSwitcher } from '@/components/ThemeSwitcher';
 import {
   selectApiMaxTokens,
   selectApiModel,
@@ -27,11 +28,14 @@ import { modelSelectItems } from './apiSettings.constants';
 
 import styles from './ApiSettings.module.scss';
 
+
 interface ApiSettingsProps {
   className?: string;
+  open: boolean;
+  onClose: () => void;
 }
 
-export const ApiSettings = memo(({ className }: ApiSettingsProps) => {
+export const ApiSettings = memo(({ className, open, onClose }: ApiSettingsProps) => {
   const dispatch = useAppDispatch();
   const temperature = useAppSelector(selectApiTemperature);
   const model = useAppSelector(selectApiModel);
@@ -83,59 +87,75 @@ export const ApiSettings = memo(({ className }: ApiSettingsProps) => {
   }, [dispatch]);
 
   return (
-    <Stack
-      gap="10px"
-      useFlexGap
-      className={classNames(className, styles.wrapper)}
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      className={className}
+      PaperProps={{
+        sx: { width: '300px', padding: '20px' } 
+      }}
     >
-      <h3 className={styles.title}>Settings</h3>
-      <SelectComponent
-        label="Model"
-        onChange={onModelChange}
-        selectItems={modelSelectItems}
-        value={model}
-      />
-      <SliderComponent
-        label="Max tokens"
-        value={maxTokens}
-        handleChange={onMaxTokensChange}
-        max={isModelWithMaxToken ? 100000 : 8000}
-        min={1000}
-        step={1}
-      />
-      <SliderComponent
-        label="Temperature"
-        value={temperature}
-        handleChange={onTemperatureChange}
-        max={1}
-        min={0}
-        step={0.1}
-      />
-      <SliderComponent
-        label="Top K"
-        value={topK}
-        handleChange={onTopKChange}
-        max={10}
-        min={0}
-        step={1}
-      />
-      <SliderComponent
-        label="Top P"
-        value={topP}
-        handleChange={onTopPChange}
-        max={1}
-        min={0}
-        step={0.1}
-      />
-      <ButtonComponent
-        type="submit"
-        variant="outlined"
-        onClick={resetSettings}
-        className={styles.resetBtn}
-      >
-        <span>Reset Settings</span>
-      </ButtonComponent>
-    </Stack>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+        <Typography variant="h6" fontWeight="bold">Settings</Typography>
+        <IconButton onClick={onClose} size="small">
+          <X size={20} />
+        </IconButton>
+      </Box>
+
+      <Stack gap="16px">
+        <Box>
+          <Typography variant="subtitle2" gutterBottom>Theme</Typography>
+          <ThemeSwitcher />
+        </Box>
+        <SelectComponent
+          label="Model"
+          onChange={onModelChange}
+          selectItems={modelSelectItems}
+          value={model}
+        />
+        <SliderComponent
+          label="Max tokens"
+          value={maxTokens}
+          handleChange={onMaxTokensChange}
+          max={isModelWithMaxToken ? 100000 : 8000}
+          min={1000}
+          step={1}
+        />
+        <SliderComponent
+          label="Temperature"
+          value={temperature}
+          handleChange={onTemperatureChange}
+          max={1}
+          min={0}
+          step={0.1}
+        />
+        <SliderComponent
+          label="Top K"
+          value={topK}
+          handleChange={onTopKChange}
+          max={10}
+          min={0}
+          step={1}
+        />
+        <SliderComponent
+          label="Top P"
+          value={topP}
+          handleChange={onTopPChange}
+          max={1}
+          min={0}
+          step={0.1}
+        />
+        <ButtonComponent
+          type="submit"
+          variant="outlined"
+          onClick={resetSettings}
+          className={styles.resetBtn}
+        >
+          <span>Reset Settings</span>
+        </ButtonComponent>
+      </Stack>
+    </Drawer>
   );
 });
 

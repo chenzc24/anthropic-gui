@@ -25,10 +25,21 @@ export interface ConversationCommon {
   type: 'folder' | 'chat';
 }
 
+export interface AgentStep {
+  id?: string; // Unique ID for React rendering
+  type: 'agent_thought' | 'tool_call' | 'tool_result' | 'agent_error' | 'status' | 'files_generated';
+  content: string; // The text content or JSON string
+  toolName?: string;
+  toolArgs?: any;
+  status?: 'success' | 'error' | 'running';
+  files?: Array<{ name: string; path: string; url: string }>;
+}
+
 export interface ChatContent {
   id: string;
   type: PromptType;
   text: string;
+  steps?: AgentStep[];
 }
 
 export interface TreeItem {

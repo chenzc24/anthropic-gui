@@ -1,4 +1,3 @@
-import { ANTHROPIC_CONFIG } from '@/api/config';
 import { ApiSettingOptions } from '@/typings/common';
 
 export interface PromptRequest extends ApiSettingOptions {
@@ -7,44 +6,47 @@ export interface PromptRequest extends ApiSettingOptions {
 }
 
 export const submitPrompt = async ({
-  model,
-  temperature,
-  topK,
-  topP,
-  apiKey,
-  maxTokens,
   prompt,
   signal,
 }: PromptRequest) => {
+  // [MODIFIED] Use new agent endpoint for normal chat
   const requestBody = {
     prompt,
-    model,
-    temperature,
-    top_k: topK,
-    top_p: topP,
-    max_tokens_to_sample: maxTokens,
-    stop_sequences: ['\n\nHuman:'],
     stream: true,
   };
 
   const requestOptions = {
     method: 'POST',
     headers: {
-      'x-api-key': apiKey,
       'Content-Type': 'application/json',
-      accept: 'application/json',
+      accept: 'text/event-stream', // Expect SSE
     },
     signal: signal,
     body: JSON.stringify(requestBody),
   };
 
   try {
-    const response = await fetch(
-      `${ANTHROPIC_CONFIG.anthropicApiPrefix}/complete`,
-      requestOptions,
-    );
+    const response = await fetch(`/api/agent/chat`, requestOptions);
 
     return response;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(error);
+  }
+};
+
+export const submitInput = async (value: string) => {
+  const requestOptions = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ value }),
+  };
+
+  try {
+    const response = await fetch(`/api/agent/submit_input`, requestOptions);
+    return response.json();
   } catch (error) {
     console.error(error);
   }

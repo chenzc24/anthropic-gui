@@ -9,7 +9,6 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { selectCountConversations } from '@/redux/conversations/conversations.selectors';
 import {
   clearConversations,
-  saveFolder,
 } from '@/redux/conversations/conversationsSlice';
 import { useAppSelector } from '@/redux/hooks';
 import { ButtonComponent } from '@/ui/ButtonComponent';
@@ -29,10 +28,6 @@ export const Conversations = memo(() => {
 
   const onSearchChange = (event: ChangeEvent<HTMLInputElement>) => {
     setSearchedName(event.target.value);
-  };
-
-  const onClickNewFolder = () => {
-    dispatch(saveFolder({ name: 'New Folder' }));
   };
 
   const onClickClear = () => {
@@ -100,22 +95,6 @@ export const Conversations = memo(() => {
           )}
         </OutsideClickHandler>
       </div>
-
-      {debouncedSearch ? (
-        <div className={`${styles.newFolderDisabled} `}>
-          <button>
-            <IconComponent type="newFolder" />
-          </button>
-          <span>Add new folder</span>
-        </div>
-      ) : (
-        <div className={styles.newFolder} onClick={onClickNewFolder}>
-          <button>
-            <IconComponent type="newFolder" />
-          </button>
-          <span>Add new folder</span>
-        </div>
-      )}
 
       {debouncedSearch ? (
         <ChatsTreeSearch searchName={debouncedSearch} />

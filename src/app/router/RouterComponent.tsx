@@ -4,6 +4,7 @@ import { Route, Routes } from 'react-router-dom';
 
 import { ROUTES } from '@/app/router/constants/routes';
 import { ChatNew, ChatSelected } from '@/features/Chat';
+import { LayoutEditor } from '@/features/LayoutEditor';
 import { AuthPage } from '@/pages/AuthPage';
 import { ChatLayoutPage } from '@/pages/ChatLayoutPage';
 
@@ -20,6 +21,14 @@ export const RouterComponent = () => (
             <ChatLayoutPage>
               <ChatNew />
             </ChatLayoutPage>
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path={ROUTES.Editor}
+        element={
+          <PrivateRoute>
+            <LayoutEditor />
           </PrivateRoute>
         }
       />

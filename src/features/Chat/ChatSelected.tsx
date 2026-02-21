@@ -14,7 +14,7 @@ import { useSelector } from 'react-redux';
 import { useNavigate, useParams } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 
-import { submitPrompt } from '@/api/prompt.api';
+import { submitPrompt, submitInput } from '@/api/prompt.api';
 import { NavigationContext } from '@/app/App';
 import { ROUTES } from '@/app/router/constants/routes';
 import {
@@ -31,9 +31,11 @@ import {
   renameChatTreeItem,
   updateChatContents,
   updateContentById,
+  appendContentById,
+  addStepToContent,
 } from '@/redux/conversations/conversationsSlice';
 import { useAppDispatch, useAppSelector } from '@/redux/hooks';
-import { TreeItem, ChatContent } from '@/typings/common';
+import { TreeItem, ChatContent, AgentStep } from '@/typings/common';
 import { ButtonComponent } from '@/ui/ButtonComponent';
 import { IconComponent } from '@/ui/IconComponent';
 import { TextFieldComponent } from '@/ui/TextFieldComponent';
@@ -75,6 +77,8 @@ export const ChatSelected: React.FC = () => {
   const [updatingAiPromptId, setUpdatingAiPromptId] = useState('');
 
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isWaitingForInput, setIsWaitingForInput] = useState(false);
+  const [inputPrompt, setInputPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const apiKey = useSelector(selectApiKey);
@@ -211,76 +215,190 @@ export const ChatSelected: React.FC = () => {
           const decoder = new TextDecoder('utf-8');
 
           let newPrompt: ChatContent | undefined;
+          let assistantContentId = '';
 
+          // Initialize Assistant Message
           if (!isRegenerate) {
+            assistantContentId = uuidv4();
             newPrompt = {
               type: 'Assistant',
               text: '',
-              id: uuidv4(),
+              id: assistantContentId,
+              steps: [],
             };
             dispatch(
               addPromptToChat({ chatId: chat?.id || '', content: newPrompt }),
             );
+          } else {
+            assistantContentId = lastAssistantPrompt?.id || '';
           }
+
+          setUpdatingAiPromptId(assistantContentId);
+
+          let buffer = '';
+          let pendingNewAssistantBlock = false; // Flag to create new block after input
 
           while (true) {
             const res = await reader?.read();
+            if (res?.done) break;
 
-            if (res?.done) {
-              setIsStreaming(false);
-              break;
-            }
-            let lastLine = null;
-            const lastLineData = decoder.decode(res?.value);
+            buffer += decoder.decode(res?.value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop() || ''; // Keep incomplete part
 
-            const lastLineArray = lastLineData.split('data: ');
+            for (const block of lines) {
+              const dataLine = block
+                .split('\n')
+                .find(l => l.startsWith('data: '));
 
-            for (let i = lastLineArray.length - 1; i >= 0; i--) {
-              if (
-                lastLineArray[i].includes('{"completion":') &&
-                (lastLineArray[i].includes('"exception":null}') ||
-                  lastLineArray[i].includes('"exception": null}'))
-              ) {
-                lastLine = lastLineArray[i];
-                break;
-              }
-            }
+              if (dataLine) {
+                try {
+                  const jsonStr = dataLine.substring(6);
+                  if (jsonStr.trim() === '[DONE]') continue;
 
-            if (lastLine) {
-              const eventData = JSON.parse(lastLine);
+                  const eventData = JSON.parse(jsonStr);
+                  const { type, content } = eventData;
 
-              if (eventData.completion) {
-                if (isRegenerate) {
-                  setUpdatingAiPromptId(lastAssistantPrompt?.id || '');
-                } else {
-                  setUpdatingAiPromptId(newPrompt?.id || '');
+                  // If we need a new block and we are receiving content (not just status/ping)
+                  if (
+                    pendingNewAssistantBlock &&
+                    [
+                      'final_answer_delta',
+                      'agent_thought',
+                      'tool_call',
+                    ].includes(type)
+                  ) {
+                    assistantContentId = uuidv4();
+                    const newAssistantPrompt: ChatContent = {
+                      type: 'Assistant',
+                      text: '',
+                      id: assistantContentId,
+                      steps: [],
+                    };
+                    dispatch(
+                      addPromptToChat({
+                        chatId: chat?.id || '',
+                        content: newAssistantPrompt,
+                      }),
+                    );
+                    setUpdatingAiPromptId(assistantContentId);
+                    pendingNewAssistantBlock = false;
+                  }
+
+                  if (type === 'input_request') {
+                    setIsWaitingForInput(true);
+                    setInputPrompt(content.prompt);
+                    setIsLoading(false);
+                    setIsStreaming(false); // Pause streaming UI to show input box
+
+                    // 1. Show the question in the chat
+                    dispatch(
+                      appendContentById({
+                        chatId: chat?.id || '',
+                        contentId: assistantContentId,
+                        textDelta: `\n\n❓ **${content.prompt}**\n`,
+                      }),
+                    );
+
+                    // 2. Automatically add a Human row for answer
+                    addPromptRow('Human')();
+
+                    // 3. Flag that next content should go to a NEW assistant block
+                    pendingNewAssistantBlock = true;
+                  } else if (type === 'final_answer_delta') {
+                    // Update main text
+                    dispatch(
+                      appendContentById({
+                        chatId: chat?.id || '',
+                        contentId: assistantContentId,
+                        textDelta: content,
+                      }),
+                    );
+                  } else if (
+                    [
+                      'agent_thought',
+                      'tool_call',
+                      'tool_result',
+                      'agent_error',
+                      'files_generated',
+                      'status',
+                    ].includes(type)
+                  ) {
+                    if (type === 'files_generated') {
+                      // Format files list as Markdown and append to main text
+                      const files = content;
+                      if (files && Array.isArray(files) && files.length > 0) {
+                        dispatch(
+                          appendContentById({
+                            chatId: chat?.id || '',
+                            contentId: assistantContentId,
+                            textDelta: '\n\n**Generated Files:**\n',
+                          }),
+                        );
+
+                        for (const file of files) {
+                          const isImage = /\.(png|jpg|jpeg|gif)$/i.test(
+                            file.name,
+                          );
+                          let fileMd = '';
+                          if (isImage) {
+                            fileMd = `\n![${file.name}](${file.path})\n`;
+                          } else {
+                            fileMd = `\n[${file.name}](${file.path})\n`;
+                          }
+                          dispatch(
+                            appendContentById({
+                              chatId: chat?.id || '',
+                              contentId: assistantContentId,
+                              textDelta: fileMd,
+                            }),
+                          );
+                        }
+                      }
+                    }
+
+                    // Dispatch structural step
+                    const step: AgentStep = {
+                      id: uuidv4(),
+                      type: type as any,
+                      content:
+                        typeof content === 'string'
+                          ? content
+                          : JSON.stringify(content),
+                      toolName: content?.name,
+                      toolArgs: content?.arguments,
+                      status: type === 'agent_error' ? 'error' : 'success',
+                      files: type === 'files_generated' ? content : undefined,
+                    };
+
+                    dispatch(
+                      addStepToContent({
+                        chatId: chat?.id || '',
+                        contentId: assistantContentId,
+                        step,
+                      }),
+                    );
+                  }
+                } catch (e) {
+                  // eslint-disable-next-line no-console
+                  console.error('Error parsing SSE', e);
                 }
-                dispatch(
-                  updateContentById({
-                    chatId: chat?.id ?? '',
-                    contentId:
-                      (isRegenerate
-                        ? lastAssistantPrompt?.id
-                        : newPrompt?.id) || '',
-                    text: eventData.completion,
-                  }),
-                );
-              } else if (eventData.error) {
-                setIsLoading(false);
-                setIsStreaming(false);
-                alert('Error: ' + eventData.error.message);
               }
             }
           }
+
+          // Legacy Loop Replacement End
           if (!isRegenerate) {
             addPromptRow('Human')();
           }
         } else {
+          // eslint-disable-next-line no-console
           console.error('Error: ' + response?.statusText);
           setIsStreaming(false);
           setIsLoading(false);
         }
       } catch (error) {
+        // eslint-disable-next-line no-console
         console.error('error', error);
       } finally {
         setIsLoading(false);
@@ -309,9 +427,34 @@ export const ChatSelected: React.FC = () => {
   }, [generateResponse, lastAssistantPrompt]);
 
   const handlePromptSubmit = useCallback(async () => {
-    await generateResponse();
+    if (isWaitingForInput) {
+      // Find the pending user prompt content
+      const pendingPrompt = chat?.content?.[chat.content.length - 1];
+      const inputValue = pendingPrompt?.text || '';
+
+      await submitInput(inputValue);
+
+      // Reset state
+      setIsWaitingForInput(false);
+      setInputPrompt('');
+
+      // Resume streaming UI
+      setIsLoading(true);
+      setIsStreaming(true);
+
+      // Re-connect to SSE stream isn't needed as backend keeps it open?
+      // Actually backend thread blocks, but frontend connection might have closed if fetch finished?
+      // Wait, in `generateResponse`, the fetch only finishes when reader is done.
+      // If backend blocks on `input_event.wait()`, it doesn't close the stream.
+      // So the `reader.read()` loop is still active, just waiting for data.
+      // So we don't need to do anything here except sending the input!
+      // But wait, user needs to type into the prompt box.
+      // The prompt box updates Redux/State `chat.content`.
+    } else {
+      await generateResponse();
+    }
     setHasSubmitted(true);
-  }, [generateResponse]);
+  }, [generateResponse, isWaitingForInput, chat?.content]);
 
   useEffect(() => {
     if (didNewChatNavigate && !hasSubmitted) {
@@ -480,6 +623,17 @@ export const ChatSelected: React.FC = () => {
       <div className={styles.chatButtonsContainer}>
         <div>
           <div className={styles.buttonsColumn}>
+            {isWaitingForInput && inputPrompt && (
+              <div
+                style={{
+                  marginBottom: '8px',
+                  fontStyle: 'italic',
+                  maxWidth: '300px',
+                }}
+              >
+                {inputPrompt}
+              </div>
+            )}
             <button
               onClick={addPromptRow()}
               className={styles.buttonAddChat}
@@ -490,12 +644,16 @@ export const ChatSelected: React.FC = () => {
             {!isStreaming ? (
               <ButtonComponent
                 type="submit"
-                variant="contained"
+                variant={isWaitingForInput ? 'outlined' : 'contained'}
                 onClick={handlePromptSubmit}
                 disabled={isLoading}
               >
-                <span>Submit</span>
-                <IconComponent type="submit" />
+                <span>{isWaitingForInput ? 'Submit Input' : 'Submit'}</span>
+                {isWaitingForInput ? (
+                  <IconComponent type="confirm" />
+                ) : (
+                  <IconComponent type="submit" />
+                )}
               </ButtonComponent>
             ) : (
               <ButtonComponent variant="outlined" onClick={stopStream}>

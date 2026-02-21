@@ -1,9 +1,9 @@
 .wrapper {
   height: 100vh;
   display: grid;
-  grid-template-columns: minmax(250px, 340px) minmax(650px, 1fr) minmax(250px, 340px);
+  grid-template-columns: minmax(250px, 340px) 1fr;
 
   @media (width >= 2400px) {
-    grid-template-columns: minmax(250px, 500px) minmax(650px, 1fr) minmax(250px, 500px);
+    grid-template-columns: minmax(250px, 500px) 1fr;
   }
 }
