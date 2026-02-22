@@ -1,17 +1,11 @@
 import React from 'react';
 
-import {
-  Box,
-  Paper,
-  Typography,
-  Chip,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-} from '@mui/material';
+import { Box, Paper, Typography } from '@mui/material';
 
 import { AgentStep } from '@/typings/common';
 import { IconComponent } from '@/ui/IconComponent';
+
+import { MarkdownDisplay } from './MarkdownDisplay';
 
 // Styles could be integrated later, using inline styles for speed
 const styles = {
@@ -57,118 +51,148 @@ const styles = {
 export const AgentSteps = ({ steps }: { steps: AgentStep[] }) => {
   if (!steps || steps.length === 0) return null;
 
+  const normalizeGeneratedFiles = (step: any): any[] => {
+    const toArray = (value: any): any[] => {
+      if (Array.isArray(value)) return value;
+      if (value && typeof value === 'object') return [value];
+      return [];
+    };
+
+    if (Array.isArray(step?.files)) {
+      return step.files;
+    }
+
+    if (step?.files && typeof step.files === 'object') {
+      return toArray(step.files);
+    }
+
+    if (typeof step?.files === 'string') {
+      try {
+        return toArray(JSON.parse(step.files));
+      } catch {
+        return [];
+      }
+    }
+
+    if (typeof step?.content === 'string') {
+      try {
+        return toArray(JSON.parse(step.content));
+      } catch {
+        return [];
+      }
+    }
+
+    return [];
+  };
+
+  const hasMeaningfulText = (value: unknown): boolean => {
+    if (typeof value !== 'string') {
+      return false;
+    }
+
+    const normalized = value.trim();
+    return !['', '{}', '[]', 'null', 'undefined', 'None'].includes(normalized);
+  };
+
   return (
     <Box sx={styles.container}>
       {steps.map((step: any, index: number) => (
         // eslint-disable-next-line react/no-array-index-key
         <React.Fragment key={step.id || index}>
-          {step.type === 'agent_thought' && (
+          {step.type === 'agent_thought' && hasMeaningfulText(step.content) && (
             <Box sx={styles.thoughtContent}>
-              <Typography variant="body2" component="div">
-                {step.content}
-              </Typography>
+              <MarkdownDisplay content={step.content} />
             </Box>
           )}
 
-          {step.type === 'tool_call' && (
-            <Accordion defaultExpanded>
-              <AccordionSummary expandIcon={<IconComponent type="arrowDown" />}>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Chip
-                    label="Tool Call"
-                    size="small"
-                    color="primary"
-                    variant="outlined"
-                  />
-                  <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                    {step.toolName || 'Unknown Tool'}
+          {step.type === 'files_generated' &&
+            (() => {
+              const files = normalizeGeneratedFiles(step);
+              if (files.length === 0) return null;
+
+              return (
+                <Box mt={1} mb={1} p={1} bgcolor="#f0f8ff" borderRadius="4px">
+                  <Typography
+                    variant="subtitle2"
+                    sx={{ fontWeight: 'bold', mb: 1 }}
+                  >
+                    Generated Files:
                   </Typography>
-                </Box>
-              </AccordionSummary>
-              <AccordionDetails sx={{ padding: 0 }}>
-                <Box sx={styles.content}>
-                  {/* Pretty print arguments if json */}
-                  <pre style={{ margin: 0 }}>
-                    {JSON.stringify(step.toolArgs, null, 2)}
-                  </pre>
-                </Box>
-              </AccordionDetails>
-            </Accordion>
-          )}
+                  <Box display="flex" flexDirection="column" gap={1}>
+                    {files.map((file: any, i: number) => {
+                      const fileName = file?.name || `file-${i + 1}`;
+                      const fileUrl = file?.url || file?.path || '#';
+                      const isImage = /\.(png|jpg|jpeg|gif)$/i.test(fileName);
 
-
-          {step.type === 'files_generated' && step.files && (
-            <Box mt={1} mb={1} p={1} bgcolor="#f0f8ff" borderRadius="4px">
-              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
-                Generated Files:
-              </Typography>
-              <Box display="flex" flexDirection="column" gap={1}>
-                {step.files.map((file: any, i: number) => {
-                  const isImage = /\.(png|jpg|jpeg|gif)$/i.test(file.name);
-                  return (
-                    <Box key={i} p={1} border="1px solid #ddd" borderRadius={1} bgcolor="white">
-                      {isImage ? (
-                        <Box>
-                          <a href={file.url} target="_blank" rel="noopener noreferrer">
-                             <img 
-                                src={file.url} 
-                                alt={file.name} 
-                                style={{ maxWidth: '100%', maxHeight: '300px', display: 'block' }} 
-                             />
-                          </a>
-                          <Typography variant="caption" display="block" mt={0.5}>
-                            {file.name}
-                          </Typography>
-                        </Box>
-                      ) : (
-                        <Box 
-                          component="a" 
-                          href={file.url} 
-                          target="_blank" 
-                          download 
-                          display="flex" 
-                          alignItems="center" 
-                          gap={1} 
-                          sx={{ textDecoration: 'none', color: '#1976d2' }}
+                      return (
+                        <Box
+                          key={`${fileName}-${i}`} // eslint-disable-line react/no-array-index-key
+                          p={1}
+                          border="1px solid #ddd"
+                          borderRadius={1}
+                          bgcolor="white"
                         >
-                          <IconComponent type="openedFolder" /> 
-                          <Typography variant="body2" sx={{ textDecoration: 'underline' }}>{file.name}</Typography>
+                          {isImage ? (
+                            <Box>
+                              <a
+                                href={fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <img
+                                  src={fileUrl}
+                                  alt={fileName}
+                                  style={{
+                                    maxWidth: '100%',
+                                    maxHeight: '300px',
+                                    display: 'block',
+                                  }}
+                                />
+                              </a>
+                              <Typography
+                                variant="caption"
+                                display="block"
+                                mt={0.5}
+                              >
+                                {fileName}
+                              </Typography>
+                            </Box>
+                          ) : (
+                            <Box
+                              component="a"
+                              href={fileUrl}
+                              target="_blank"
+                              download
+                              display="flex"
+                              alignItems="center"
+                              gap={1}
+                              sx={{ textDecoration: 'none', color: '#1976d2' }}
+                            >
+                              <IconComponent type="openedFolder" />
+                              <Typography
+                                variant="body2"
+                                sx={{ textDecoration: 'underline' }}
+                              >
+                                {fileName}
+                              </Typography>
+                            </Box>
+                          )}
                         </Box>
-                      )}
-                    </Box>
-                  );
-                })}
-              </Box>
-            </Box>
-          )}
-
-          {step.type === 'tool_result' && (
-            <Accordion>
-              <AccordionSummary>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Chip
-                    label="Result"
-                    size="small"
-                    color="success"
-                    variant="outlined"
-                  />
-                  <Typography variant="subtitle2" sx={{ color: '#666' }}>
-                    Observation
-                  </Typography>
+                      );
+                    })}
+                  </Box>
                 </Box>
-              </AccordionSummary>
-              <AccordionDetails sx={{ padding: 0 }}>
-                <Box sx={styles.content}>{step.content}</Box>
-              </AccordionDetails>
-            </Accordion>
-          )}
+              );
+            })()}
 
-          {step.type === 'agent_error' && (
+          {step.type === 'agent_error' && hasMeaningfulText(step.content) && (
             <Paper sx={{ ...styles.stepContainer, borderColor: 'red' }}>
               <Box sx={{ ...styles.header, backgroundColor: '#ffebee' }}>
                 <Typography color="error">Error</Typography>
               </Box>
-              <Box sx={styles.content}>{step.content}</Box>
+              <Box sx={{ padding: '8px' }}>
+                <MarkdownDisplay content={step.content} />
+              </Box>
             </Paper>
           )}
         </React.Fragment>

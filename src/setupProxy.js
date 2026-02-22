@@ -19,15 +19,6 @@ module.exports = function(app) {
     })
   );
 
-  // New: Proxy uploads directory for static files
-  app.use(
-    '/uploads',
-    createProxyMiddleware({
-      target: 'http://127.0.0.1:8000',
-      changeOrigin: true,
-    })
-  );
-
   // New: Proxy output directory for generated files
   app.use(
     '/output',

@@ -26,10 +26,11 @@ import {
 } from 'slate-react';
 import { unified } from 'unified';
 
+import { uploadFile } from '@/api/files.api';
 import { IconComponent } from '@/ui/IconComponent';
 
-import { uploadFile } from '@/api/files.api';
 import { AgentSteps } from './AgentSteps';
+import { MarkdownDisplay } from './MarkdownDisplay';
 import { CodeLeaf, decorateCodeFunc } from './parsers/code';
 import { transformResultParse } from './parsers/html';
 import { serialize } from './parsers/slate2md';
@@ -68,27 +69,36 @@ export const EditablePrompt = memo(
       fileInputRef.current?.click();
     }, []);
 
-    const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
+    const handleFileChange = useCallback(
+      async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
 
-      try {
-        const placeholder = `\n[Uploading ${file.name}...]`;
-        Transforms.insertText(editor, placeholder);
-        
-        const filepath = await uploadFile(file);
-        
-        Transforms.insertText(editor, `\n[File: ${filepath}]`);
-        
-      } catch (error) {
-        console.error('File upload failed:', error);
-        Transforms.insertText(editor, `\n[Error uploading ${file.name}]`);
-      } finally {
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
+        try {
+          const placeholder = `\n[Uploading ${file.name}...]`;
+          Transforms.insertText(editor, placeholder);
+
+          const fileInfo = (await uploadFile(file)) as any;
+
+          // Use a more descriptive format so the agent knows the original filename
+          const fName = fileInfo.filename || file.name;
+          const fPath = fileInfo.filepath || fileInfo;
+          Transforms.insertText(editor, `\n[File: ${fName} (Path: ${fPath})]`);
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error('File upload failed:', error);
+          Transforms.insertText(
+            editor,
+            `\n[Error uploading ${file.name}: ${String(error)}]`,
+          );
+        } finally {
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
         }
-      }
-    }, [editor]);
+      },
+      [editor],
+    );
 
     const renderLeaf = useCallback(
       (props: RenderLeafProps) => <CodeLeaf {...props} />,
@@ -126,11 +136,7 @@ export const EditablePrompt = memo(
 
         switch (customElement.type) {
           case 'code':
-            const language = customElement.lang;
-
-            if (!language || language === 'null') {
-              return <p {...attributes}>{children}</p>;
-            }
+            const language = customElement.lang || 'text';
 
             return (
               <div className={styles.codeWrapper}>
@@ -209,6 +215,11 @@ export const EditablePrompt = memo(
     );
 
     useEffect(() => {
+      // If we are showing MarkdownDisplay (Assistant mode), do not try to manipulate the hidden editor state
+      if (type === 'Assistant') {
+        return;
+      }
+
       const processor = unified().use(markdown).use(remarkToSlate);
 
       const result = processor.processSync(text).result;
@@ -228,28 +239,38 @@ export const EditablePrompt = memo(
         });
 
         Transforms.insertNodes(editor, transformedResult as Descendant[]);
+        valueRef.current = transformedResult as Descendant[];
       }
-    }, [text, editor]);
+    }, [text, editor, type]);
 
-    const onBlur = useCallback(() => {
-      if (valueRef.current === null) {
+    const persistCurrentPrompt = useCallback(() => {
+      if (type !== 'Human') {
         return;
       }
 
-      const markdownText = serialize(valueRef.current);
+      const currentValue =
+        Array.isArray(editor.children) && editor.children.length > 0
+          ? (editor.children as Descendant[])
+          : valueRef.current;
 
+      if (!currentValue) {
+        return;
+      }
+
+      const markdownText = serialize(currentValue);
       handlePromptBlur(id, markdownText);
-    }, [handlePromptBlur, id]);
+    }, [editor, handlePromptBlur, id, type]);
+
+    const onBlur = useCallback(() => {
+      persistCurrentPrompt();
+    }, [persistCurrentPrompt]);
 
     useEffect(
       () => () => {
-        if (valueRef.current) {
-          const markdownText = serialize(valueRef.current);
-          handlePromptBlur(id, markdownText);
-        }
+        persistCurrentPrompt();
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
-      [],
+      [persistCurrentPrompt],
     );
 
     const onChange = (newValue: Descendant[]) => {
@@ -522,23 +543,27 @@ export const EditablePrompt = memo(
           {valueRef.current ? (
             <>
               {steps && steps.length > 0 && <AgentSteps steps={steps} />}
-              <Slate
-                editor={editor}
-                initialValue={valueRef.current}
-                onChange={onChange}
-              >
-                <Editable
-                  spellCheck={false}
-                  renderElement={renderElement}
-                  className={styles.promptField}
-                  onBlur={onBlur}
-                  renderLeaf={renderLeaf}
-                  decorate={decorate}
-                  onKeyDown={onKeyDown}
-                  readOnly={readOnly}
-                  onPaste={handlePaste}
-                />
-              </Slate>
+              {type === 'Assistant' ? (
+                <MarkdownDisplay content={text} />
+              ) : (
+                <Slate
+                  editor={editor}
+                  initialValue={valueRef.current}
+                  onChange={onChange}
+                >
+                  <Editable
+                    spellCheck={false}
+                    renderElement={renderElement}
+                    className={styles.promptField}
+                    onBlur={onBlur}
+                    renderLeaf={renderLeaf}
+                    decorate={decorate}
+                    onKeyDown={onKeyDown}
+                    readOnly={readOnly}
+                    onPaste={handlePaste}
+                  />
+                </Slate>
+              )}
             </>
           ) : null}
         </div>

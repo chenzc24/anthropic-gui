@@ -35,11 +35,20 @@ export interface AgentStep {
   files?: Array<{ name: string; path: string; url: string }>;
 }
 
+export interface ChatFile {
+  id: string; // Unique ID
+  name: string; // File name (e.g. layout.json)
+  url: string; // Download URL or path
+  type: 'image' | 'code' | 'json' | 'config' | 'il' | 'unknown'; // Derived type
+  timestamp: number; // Creation time
+}
+
 export interface ChatContent {
   id: string;
   type: PromptType;
   text: string;
   steps?: AgentStep[];
+  assets?: ChatFile[]; // Structured generated files
 }
 
 export interface TreeItem {

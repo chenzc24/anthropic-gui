@@ -1,7 +1,13 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { v4 as uuidv4 } from 'uuid';
 
-import { TreeItem, TreeItems, ChatContent, AgentStep } from '@/typings/common';
+import {
+  TreeItem,
+  TreeItems,
+  ChatContent,
+  AgentStep,
+  ChatFile,
+} from '@/typings/common';
 
 import { findChatById } from './conversations.selectors';
 
@@ -171,6 +177,26 @@ export const conversationsSlice = createSlice({
         content.steps.push(step);
       }
     },
+    addAssetsToContent: (
+      state,
+      action: PayloadAction<{
+        chatId: string;
+        contentId: string;
+        assets: ChatFile[];
+      }>,
+    ) => {
+      const { chatId, contentId, assets } = action.payload;
+
+      const chat = findChatById(state.conversations, chatId);
+      const content = chat?.content?.find(c => c.id === contentId);
+
+      if (content) {
+        if (!content.assets) {
+          content.assets = [];
+        }
+        content.assets.push(...assets);
+      }
+    },
     addPromptToChat: (
       state,
       action: PayloadAction<{ chatId: string; content: ChatContent }>,
@@ -221,6 +247,7 @@ export const {
   updateContentById,
   appendContentById,
   addStepToContent,
+  addAssetsToContent,
   renameChatTreeItem,
   deleteChatTreeItem,
   updateChatTree,

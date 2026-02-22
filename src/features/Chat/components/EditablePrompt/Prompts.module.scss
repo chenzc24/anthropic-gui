@@ -84,6 +84,13 @@
   }
 
   .codeWrapper {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: fit-content;
+    max-width: 100%;
+    margin: 6px 0;
+
     * {
       margin: 0;
       white-space: pre;
@@ -95,8 +102,10 @@
       border-radius: 0 0 8px 8px;
       padding: 15px;
       overflow-x: auto;
+      max-width: min(100%, 920px);
 
       code {
+        display: block;
         background: var(--bg-secondary);
         border-radius: 8px;
 
@@ -114,6 +123,9 @@
       border-radius: 8px 8px 0 0;
       padding: 10px 15px;
       color: var(--text-secondary);
+      width: 100%;
+      min-width: 0;
+      max-width: min(100%, 920px);
 
       & > span {
         white-space: nowrap;
@@ -146,6 +158,13 @@
   * {
     white-space: pre-wrap;
     margin-bottom: 10px;
+  }
+
+  p,
+  blockquote,
+  ul,
+  ol {
+    max-width: 88ch;
   }
 
   & > :last-child {
