@@ -2,6 +2,7 @@ import { combineReducers, configureStore } from '@reduxjs/toolkit';
 import { persistReducer, persistStore } from 'redux-persist';
 import storage from 'redux-persist/es/storage';
 
+import { agentStreamSlice } from './agentStream/agentStream.slice';
 import { apiSettingsSlice } from './apiSettings/apiSettings.slice';
 import { conversationsSlice } from './conversations/conversationsSlice';
 import { themeSlice } from './theme/themeSlice';
@@ -9,10 +10,12 @@ import { themeSlice } from './theme/themeSlice';
 const persistConfig = {
   key: 'root',
   storage,
+  blacklist: ['agentStream'],
 };
 
 const reducers = combineReducers({
   apiSettings: apiSettingsSlice.reducer,
+  agentStream: agentStreamSlice.reducer,
   chats: conversationsSlice.reducer,
   theme: themeSlice.reducer,
 });

@@ -6,163 +6,161 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 interface ExternalInstance {
   name: string;
   device: string;
-  position: string;
   type: string;
+  side?: string;
+  order?: number;
+  position?: string | [number, number]; // Legacy string or new [x,y] coordinates
   [key: string]: any;
 }
 
-interface ExternalGraph {
-  ring_config: any;
-  instances: ExternalInstance[];
-}
-
 /**
- * Parses external JSON format (string position "left_0")
- * into internal GUI format (structured side/order).
+ * Parses external JSON format into internal GUI format.
+ * Supports both Legacy (position strings) and New (side/order + visual_metadata) formats.
  */
-export const importAdapter = (json: ExternalGraph): IntentGraph => {
-  let processedInstances: Instance[] = json.instances.map(extInst => {
-    const { position, name, device, type, ...rest } = extInst;
+export const importAdapter = (json: any): IntentGraph => {
+  // Determine source of instances: prefer layout_data, fallback to instances
+  const sourceInstances: ExternalInstance[] =
+    json.layout_data || json.instances || [];
 
-    let side: Side | 'corner' = 'top'; // Default
-    let order = 0;
-
-    // Regex for standard IO positions: "left_0", "top_12"
-    const ioMatch = position.match(/^(top|bottom|left|right)_(\d+)$/);
-
-    // Regex for corners: "top_left", "bottom_right"
-    const cornerMatch = position.match(/^(top|bottom)_(left|right)$/);
-
-    if (ioMatch) {
-      side = ioMatch[1] as Side;
-      order = parseInt(ioMatch[2], 10);
-    } else if (cornerMatch) {
-      side = 'corner' as any; // Allow 'corner' to exist in store but ignored by renderer
-      // We store the original corner position in meta to restore it later
-      // eslint-disable-next-line @typescript-eslint/dot-notation
-      rest['_original_position'] = position;
-    } else {
-      // eslint-disable-next-line no-console
-      console.warn(`Unknown position format: ${position} for instance ${name}`);
-      // Fallback or keep as is? Let's treat as 'corner' type so it doesn't mess up IOs
-      side = 'corner' as any;
-      // eslint-disable-next-line @typescript-eslint/dot-notation
-      rest['_original_position'] = position;
-    }
-
-    return {
-      id: generateId(),
+  const processedInstances: Instance[] = sourceInstances.map(extInst => {
+    // Destructure properties to handle different formats
+    const {
+      position,
       name,
       device,
       type,
-      side: side as Side, // Cast to satisfy type system
+      side,
       order,
+      id: rawId,
+      meta: rawMeta,
+      ...rest
+    } = extInst;
+
+    const normalizedMeta =
+      rawMeta && typeof rawMeta === 'object'
+        ? { ...(rawMeta as Record<string, any>) }
+        : {};
+
+    let finalSide: Side | 'corner' = 'top'; // Default
+    let finalOrder = 0;
+
+    // Check if new format (explicit side/order)
+    if (side && order !== undefined) {
+      finalSide = side as Side | 'corner';
+      const numericOrder = Number(order);
+      finalOrder = Number.isFinite(numericOrder)
+        ? Math.max(1, numericOrder)
+        : 1;
+    } else if (typeof position === 'string') {
+      // Legacy: Regex parse position string
+      const ioMatch = position.match(/^(top|bottom|left|right)_(\d+)$/);
+      const cornerMatch = position.match(/^(top|bottom)_(left|right)$/);
+
+      if (ioMatch) {
+        finalSide = ioMatch[1] as Side;
+        finalOrder = parseInt(ioMatch[2], 10) + 1;
+      } else if (cornerMatch) {
+        finalSide = 'corner';
+        // eslint-disable-next-line @typescript-eslint/dot-notation
+        normalizedMeta['_original_position'] = position;
+      } else {
+        finalSide = 'corner'; // Fallback
+      }
+    } else {
+      // Fallback or Unknown
+      finalSide = 'corner';
+    }
+
+    // Ensure ID exists
+    const id = rawId || generateId();
+
+    return {
+      id,
+      name: name || `Inst_${id}`,
+      device: device || 'UNKNOWN',
+      type: type || 'unknown',
+      side: finalSide as Side, // Cast to satisfy type system
+      order: finalOrder,
       meta: {
-        ...rest, // Store all extra fields (pin_config, domain, etc) in meta
-        // If it was a corner/special, we might have added _original_position here
+        ...normalizedMeta,
+        ...rest,
+        // If it was a legacy corner, we might have added _original_position here
+        // Preserve position if it's coordinates
+        ...(Array.isArray(position) ? { position } : {}),
       },
     };
   });
 
-  // Inject fillers if none exist
-  const totalFillers = processedInstances.filter(
-    inst =>
-      inst.type === 'filler' ||
-      (inst.device && inst.device.toUpperCase().includes('FILLER')),
-  ).length;
-
-  if (totalFillers === 0) {
-    const sides: Side[] = ['top', 'right', 'bottom', 'left'];
-    const newInstances: Instance[] = [];
-
-    const createFiller = (side: Side, order: number): Instance => ({
-      id: generateId(),
-      name: `FILLER_auto_${generateId()}`,
-      device: 'FILLER_auto',
-      type: 'filler',
-      side,
-      order,
-      meta: {
-        view_name: 'layout',
-        generated: true,
-      },
-    });
-
-    // Preserve corners/others
-    const nonSideInstances = processedInstances.filter(
-      inst => !sides.includes(inst.side),
-    );
-    newInstances.push(...nonSideInstances);
-
-    sides.forEach(side => {
-      const sideInstances = processedInstances
-        .filter(inst => inst.side === side)
-        .sort((a, b) => a.order - b.order);
-
-      if (sideInstances.length === 0) return;
-
-      let currentOrder = 0;
-
-      // Add 2 fillers at start
-      newInstances.push(createFiller(side, currentOrder++));
-      newInstances.push(createFiller(side, currentOrder++));
-
-      sideInstances.forEach((inst, index) => {
-        if (index > 0) {
-          // Add 2 fillers between cells
-          newInstances.push(createFiller(side, currentOrder++));
-          newInstances.push(createFiller(side, currentOrder++));
-        }
-        // Add IO
-        newInstances.push({ ...inst, order: currentOrder++ });
-      });
-
-      // Add 2 fillers at end
-      newInstances.push(createFiller(side, currentOrder++));
-      newInstances.push(createFiller(side, currentOrder++));
-    });
-
-    processedInstances = newInstances;
+  // If no instances, create empty
+  if (processedInstances.length === 0) {
+    return {
+      ring_config: json.ring_config,
+      visual_metadata: json.visual_metadata,
+      instances: processedInstances,
+    };
   }
+
+  // No auto-filler generation here.
+  // The backend should provide all components including fillers.
 
   return {
     ring_config: json.ring_config,
+    visual_metadata: json.visual_metadata,
     instances: processedInstances,
   };
 };
 
 /**
  * Converts internal GUI format back to external JSON format.
+ * Exports as 'layout_data' for backend compatibility.
  */
-export const exportAdapter = (graph: IntentGraph): ExternalGraph => {
+// Return type any to fit backend expected structure
+export const exportAdapter = (graph: IntentGraph): any => {
   const exportedInstances = graph.instances.map(inst => {
     const { side, order, meta, name, device, type } = inst;
 
-    // Restore non-GUI fields from meta
-    const { _original_position, ...otherMeta } = meta || {};
+    // Extract metadata
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { _original_position, position: metaPos, ...otherMeta } = meta || {};
 
-    let position = '';
+    const normalizedOrder = Number.isFinite(Number(order))
+      ? Math.max(1, Number(order))
+      : 1;
 
-    if (_original_position) {
-      // It was a corner or special element
-      position = _original_position;
+    let position: string | [number, number] = metaPos || [0, 0];
+    if (
+      side === 'top' ||
+      side === 'right' ||
+      side === 'bottom' ||
+      side === 'left'
+    ) {
+      position = `${side}_${normalizedOrder - 1}`;
     } else {
-      // It's a standard IO, reconstruct position string
-      position = `${side}_${order}`;
+      const cornerPos =
+        meta?.location || _original_position || meta?._relative_position;
+      if (
+        cornerPos === 'top_left' ||
+        cornerPos === 'top_right' ||
+        cornerPos === 'bottom_left' ||
+        cornerPos === 'bottom_right'
+      ) {
+        position = cornerPos;
+      }
     }
 
     return {
+      id: inst.id,
       name,
       device,
-      view_name: otherMeta.view_name || 'layout', // Default or restore
-      ...otherMeta, // Spread all other preserved fields (domain, pins, etc)
-      position,
       type,
+      position, // Pass position back if we have it
+      ...otherMeta, // Spread preserved fields (domain, pins, visual props)
     };
   });
 
   return {
     ring_config: graph.ring_config,
-    instances: exportedInstances,
+    layout_data: exportedInstances, // Use 'layout_data' as expected by new backend logic
+    instances: exportedInstances, // Keep 'instances' for legacy compatibility tools
   };
 };

@@ -1,134 +1,421 @@
-import React, { useRef, useState, useMemo, useEffect } from 'react';
-import { useIORingStore } from '../store/useIORingStore';
-import { Instance, Side } from '../types';
+import React, {
+  useRef,
+  useState,
+  useMemo,
+  useEffect,
+  useCallback,
+} from 'react';
+
 import clsx from 'clsx';
 
-// Visual constants scaled down from 180nm/28nm config for screen
-const SCALE = 0.6; 
-const PAD_W_LOGICAL = 80 * SCALE; // Visual width on Top/Bottom
-const PAD_H_LOGICAL = 120 * SCALE; // Visual height on Top/Bottom (Depth)
-const FILLER_W_LOGICAL = 20 * SCALE; 
-const CORNER_SIZE = 130 * SCALE;
+import { useIORingStore } from '../store/useIORingStore';
+import { Instance, Side } from '../types';
+
+type PlacementOrder = 'clockwise' | 'counterclockwise';
+
+// Default Visual constants (Fallback if metadata missing)
+const DEFAULT_SCALE = 0.6;
+const FALLBACK_PAD_W = 80;
+const FALLBACK_PAD_H = 120;
+const FALLBACK_FILLER_W = 10;
+const FALLBACK_FILLER10_W = 10;
+const FALLBACK_CORNER_SIZE = 130;
 const PADDING = 40;
 
-const DEFAULT_CANVAS_SIZE = 800; // Starting canvas size
+const DEFAULT_CANVAS_WIDTH = 1200;
+const DEFAULT_CANVAS_HEIGHT = 720;
 const MIN_RING_SPAN = 10; // Minimum span for empty sides
+const MIN_VIEW_SCALE = 0.25;
+const MAX_VIEW_SCALE = 8;
+const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+const LEFT_GUTTER = 20;
+const RIGHT_GUTTER = 12;
 
 export const RingCanvas: React.FC = () => {
-  const { graph, selectInstance, selectedId, moveInstance, copyInstance, pasteInstance, deleteInstance } = useIORingStore();
+  const {
+    graph,
+    selectInstance,
+    selectInstances,
+    clearSelection,
+    selectedId,
+    selectedIds,
+    moveInstance,
+    moveCornerInstance,
+    copyInstance,
+    pasteInstance,
+    deleteInstances,
+  } = useIORingStore();
+  const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [viewport, setViewport] = useState({
+    width: DEFAULT_CANVAS_WIDTH,
+    height: DEFAULT_CANVAS_HEIGHT,
+  });
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [viewScale, setViewScale] = useState(1);
+  const [viewOffset, setViewOffset] = useState({ x: 0, y: 0 });
+  const [selectionBox, setSelectionBox] = useState<{
+    startX: number;
+    startY: number;
+    endX: number;
+    endY: number;
+    additive: boolean;
+  } | null>(null);
+  const [panState, setPanState] = useState<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const placementOrder: PlacementOrder =
+    String(graph?.ring_config?.placement_order || 'counterclockwise') ===
+    'clockwise'
+      ? 'clockwise'
+      : 'counterclockwise';
+
+  const shouldReverseVisual = useCallback(
+    (side: Side) => {
+      if (placementOrder === 'clockwise') {
+        return side === 'bottom' || side === 'left';
+      }
+      return side === 'top' || side === 'right';
+    },
+    [placementOrder],
+  );
+
+  // Extract Visual Metadata
+  const metadata = (graph.visual_metadata || {
+    colors: {},
+    dimensions: {},
+  }) as any;
+  const dims = metadata.dimensions || {};
+
+  // Calculate scaled dimensions based on metadata or fallback
+  const FILLER_W_LOGICAL =
+    (dims.filler_10_width || FALLBACK_FILLER_W) * DEFAULT_SCALE;
+  const FILLER10_W_LOGICAL =
+    (dims.filler_10_width || FALLBACK_FILLER10_W) * DEFAULT_SCALE;
+  const CORNER_SIZE_VISUAL =
+    (dims.corner_size || FALLBACK_CORNER_SIZE) * DEFAULT_SCALE;
+
+  const inferFillerWidth = useCallback(
+    (inst: Instance) => {
+      const isBlankType =
+        String(inst.type || '').toLowerCase() === 'blank' ||
+        String(inst.device || '').toUpperCase() === 'BLANK';
+
+      const explicit = Number(
+        isBlankType ? inst.pad_width || 0 : inst.pad_width || 0,
+      );
+      if (Number.isFinite(explicit) && explicit > 0) {
+        return explicit * DEFAULT_SCALE;
+      }
+
+      if (isBlankType) {
+        return FILLER10_W_LOGICAL;
+      }
+
+      const dev = String(inst.device || '').toUpperCase();
+      const match = dev.match(/PFILLER(\d+)/);
+      if (match) {
+        const v = Number(match[1]);
+        if (Number.isFinite(v) && v > 0) {
+          if (v === 10) return FILLER10_W_LOGICAL;
+          return v * DEFAULT_SCALE;
+        }
+      }
+
+      return FILLER_W_LOGICAL;
+    },
+    [FILLER10_W_LOGICAL, FILLER_W_LOGICAL],
+  );
+
+  const getDeviceCategory = (inst: Instance) => {
+    const type = String(inst.type || '').toLowerCase();
+    const device = String(inst.device || '').toUpperCase();
+
+    if (type === 'blank' || device === 'BLANK') return 'blank';
+    if (type === 'corner' || device.includes('CORNER')) return 'corner';
+    if (
+      type === 'filler' ||
+      device.includes('FILLER') ||
+      device.includes('RCUT')
+    ) {
+      return 'filler';
+    }
+    if (type === 'inner_pad') return 'inner_pad';
+    return 'io';
+  };
+
+  const getColor = (inst: Instance) => {
+    const device = String(inst.device || '');
+    const upperDevice = device.toUpperCase();
+    const category = getDeviceCategory(inst);
+
+    if (category === 'blank') {
+      return 'transparent';
+    }
+
+    if (metadata.colors?.[device]) {
+      return metadata.colors[device];
+    }
+
+    if (upperDevice.includes('CORNER') || upperDevice === 'PCORNER') {
+      return '#FF6B6B';
+    }
+
+    if (upperDevice.includes('FILLER') || upperDevice.includes('RCUT')) {
+      return '#C0C0C0';
+    }
+
+    const isDigital =
+      upperDevice.includes('CDG') || upperDevice.includes('PDDW');
+    const isAnalog = upperDevice.includes('ANA');
+    const isPower = upperDevice.includes('PVDD');
+    const isGround = upperDevice.includes('PVSS');
+
+    if (isDigital && isPower) {
+      return '#90EE90';
+    }
+    if (isDigital && isGround) {
+      return '#228B22';
+    }
+    if (isAnalog && isPower) {
+      return '#5BA0F2';
+    }
+    if (isAnalog && isGround) {
+      return '#3A80D2';
+    }
+    if (isDigital) {
+      return '#32CD32';
+    }
+    if (isAnalog) {
+      return '#4A90E2';
+    }
+
+    return metadata.colors?.default || '#CCCCCC';
+  };
+
+  const getInstanceThickness = useCallback(
+    (inst: Instance) => {
+      const category = getDeviceCategory(inst);
+      if (category === 'corner') {
+        const corner = Number(
+          inst.pad_height ||
+            inst.pad_width ||
+            dims.corner_size ||
+            FALLBACK_CORNER_SIZE,
+        );
+        return corner * DEFAULT_SCALE;
+      }
+      if (category === 'filler' || category === 'blank') {
+        const fillerH = Number(
+          inst.pad_height || dims.pad_height || FALLBACK_PAD_H,
+        );
+        return fillerH * DEFAULT_SCALE;
+      }
+      const padH = Number(inst.pad_height || dims.pad_height || FALLBACK_PAD_H);
+      return padH * DEFAULT_SCALE;
+    },
+    [dims.corner_size, dims.pad_height],
+  );
+
+  // Helper: Get visual width along the perimeter for an instance
+  const getInstanceWidth = useCallback(
+    (inst: Instance) => {
+      const category = getDeviceCategory(inst);
+      if (category === 'corner') {
+        const corner = Number(
+          inst.pad_width || dims.corner_size || FALLBACK_CORNER_SIZE,
+        );
+        return corner * DEFAULT_SCALE;
+      }
+      if (
+        category === 'filler' ||
+        category === 'blank' ||
+        inst.type === 'space'
+      ) {
+        return inferFillerWidth(inst);
+      }
+      const padW = Number(inst.pad_width || dims.pad_width || FALLBACK_PAD_W);
+      return padW * DEFAULT_SCALE;
+    },
+    [dims.corner_size, dims.pad_width, inferFillerWidth],
+  );
+
+  const getTextRotation = (side: Side) => {
+    if (side === 'top' || side === 'bottom') return 90;
+    return 0;
+  };
+
+  const getInstanceLabel = (inst: Instance) => {
+    const category = getDeviceCategory(inst);
+    if (category === 'blank') return '';
+    if (category === 'corner' || category === 'filler') {
+      return inst.device || inst.name || 'UNKNOWN';
+    }
+
+    let signalName = inst.name || '';
+    if (category === 'inner_pad') {
+      signalName = signalName.replace(/^inner_pad_/, '');
+      signalName = signalName.replace(/_(left|right|top|bottom)_\d+_\d+$/, '');
+    } else {
+      signalName = signalName.replace(/_(left|right|top|bottom)_\d+$/, '');
+    }
+    return `${signalName}:${inst.device || 'UNKNOWN'}`;
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-        // Ignore if input/textarea is focused, unless it is the canvas itself (which doesn't focus really)
-        // Actually, we want global hotkeys, but not when typing in a property field.
-        const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
-            return;
-        }
+      // Ignore if input/textarea is focused, unless it is the canvas itself (which doesn't focus really)
+      // Actually, we want global hotkeys, but not when typing in a property field.
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT'
+      ) {
+        return;
+      }
 
-        // Copy: Ctrl+C
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
-            if (selectedId) {
-                copyInstance(selectedId);
-            }
+      // Copy: Ctrl+C
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        if (selectedId) {
+          copyInstance(selectedId);
         }
-        // Paste: Ctrl+V
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
-            let targetSide: Side = 'top';
-            if (selectedId) {
-                const inst = graph.instances.find((i: Instance) => i.id === selectedId);
-                if (inst && (inst.side as any) !== 'corner') targetSide = inst.side;
-            }
-            pasteInstance(targetSide);
+      }
+      // Paste: Ctrl+V
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        let targetSide: Side = 'top';
+        if (selectedId) {
+          const inst = graph.instances.find(
+            (i: Instance) => i.id === selectedId,
+          );
+          if (inst && (inst.side as any) !== 'corner') targetSide = inst.side;
         }
-        // Delete: Delete or Backspace
-        if (e.key === 'Delete' || e.key === 'Backspace') {
-             if (selectedId) {
-                 deleteInstance(selectedId);
-             }
+        pasteInstance(targetSide);
+      }
+      // Delete: Delete
+      if (e.key === 'Delete') {
+        if (selectedIds.length > 0) {
+          deleteInstances(selectedIds);
         }
+      }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, graph, copyInstance, pasteInstance, deleteInstance]);
-
-  const getColor = (deviceType: string = '', type: string = '', domain?: string) => {
-    if (type === 'space') return 'rgba(255, 255, 255, 0.01)';
-    if (type === 'corner') return '#FF8888';
-    if (type === 'filler') return '#D3D3D3'; 
-    if (domain?.toLowerCase() === 'digital') return '#32CD32';
-    if (domain?.toLowerCase() === 'analog') return '#4A90E2';
-    if (deviceType.includes('DGZ') || deviceType.includes('Digital') || deviceType.includes('PDDW')) return '#32CD32'; 
-    if (deviceType.includes('ANA') || deviceType.includes('AC') || deviceType.includes('PDB')) return '#4A90E2';
-    if (deviceType.includes('CORNER')) return '#FF6B6B';
-    return '#3b82f6'; 
-  };
-  
-  // Helper: Get visual width along the perimeter for an instance
-  const getInstanceWidth = (inst: Instance) => {
-    if (inst.type === 'space') {
-      return FILLER_W_LOGICAL;
-    }
-    // If it's a filler type or named filler, use small width
-    if (inst.type === 'filler' || inst.device.includes('FILLER')) {
-      return FILLER_W_LOGICAL;
-    }
-    return PAD_W_LOGICAL;
-  };
+  }, [
+    selectedId,
+    selectedIds,
+    graph,
+    copyInstance,
+    pasteInstance,
+    deleteInstances,
+  ]);
 
   // Group instances
   const { sides, corners } = useMemo(() => {
-    const s: Record<Side, Instance[]> = { top: [], right: [], bottom: [], left: [] };
-    const c: Record<string, Instance | null> = { 
-      top_left: null, top_right: null, bottom_left: null, bottom_right: null 
+    const s: Record<Side, Instance[]> = {
+      top: [],
+      right: [],
+      bottom: [],
+      left: [],
+    };
+    const c: Record<string, Instance | null> = {
+      top_left: null,
+      top_right: null,
+      bottom_left: null,
+      bottom_right: null,
     };
 
     graph.instances.forEach((inst: Instance) => {
       if ((inst.side as any) === 'corner') {
-        const pos = inst.meta?._original_position || '';
-        if (pos === 'top_left') c.top_left = inst;
-        else if (pos === 'top_right') c.top_right = inst;
-        else if (pos === 'bottom_left') c.bottom_left = inst;
-        else if (pos === 'bottom_right') c.bottom_right = inst;
+        // Use location if available (from backend), else infer
+        const loc = inst.meta?.location || inst.meta?._original_position || '';
+        if (loc.includes('top_left')) c.top_left = inst;
+        else if (loc.includes('top_right')) c.top_right = inst;
+        else if (loc.includes('bottom_left')) c.bottom_left = inst;
+        else if (loc.includes('bottom_right')) c.bottom_right = inst;
       } else if (s[inst.side]) {
         s[inst.side].push(inst);
       }
     });
 
     Object.keys(s).forEach(k => {
-      s[k as Side].sort((a, b) => a.order - b.order);
+      const side = k as Side;
+      s[side].sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+      if (shouldReverseVisual(side)) {
+        s[side] = s[side].slice().reverse();
+      }
     });
 
     return { sides: s, corners: c };
-  }, [graph.instances]);
+  }, [graph.instances, shouldReverseVisual]);
 
   // --- Dynamic Layout Calculation ---
 
   // Calculate cumulative length for each side
   const sideLengths = useMemo(() => {
     const lens: Record<Side, number> = { top: 0, right: 0, bottom: 0, left: 0 };
-    Object.keys(sides).forEach((key) => {
+    Object.keys(sides).forEach(key => {
       const side = key as Side;
-      lens[side] = sides[side].reduce((acc, inst) => acc + getInstanceWidth(inst), 0);
+      lens[side] = sides[side].reduce(
+        (acc, inst) => acc + getInstanceWidth(inst),
+        0,
+      );
     });
     return lens;
-  }, [sides]);
+  }, [sides, getInstanceWidth]);
 
   // Calculate Ring Dims (Inner Span)
-  const ringInnerWidth = Math.max(sideLengths.top, sideLengths.bottom, MIN_RING_SPAN);
-  const ringInnerHeight = Math.max(sideLengths.left, sideLengths.right, MIN_RING_SPAN);
+  const ringInnerWidth = Math.max(
+    sideLengths.top,
+    sideLengths.bottom,
+    MIN_RING_SPAN,
+  );
+  const ringInnerHeight = Math.max(
+    sideLengths.left,
+    sideLengths.right,
+    MIN_RING_SPAN,
+  );
 
   // Calculate Visual Boundaries centered
-  const visualW = ringInnerWidth + (CORNER_SIZE * 2);
-  const visualH = ringInnerHeight + (CORNER_SIZE * 2);
-  
-  // Dynamic Canvas Size (grow if needed)
-  const canvasW = Math.max(DEFAULT_CANVAS_SIZE, visualW + PADDING * 2);
-  const canvasH = Math.max(DEFAULT_CANVAS_SIZE, visualH + PADDING * 2);
-  
+  const visualW = ringInnerWidth + CORNER_SIZE_VISUAL * 2;
+  const visualH = ringInnerHeight + CORNER_SIZE_VISUAL * 2;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateViewport = () => {
+      const rect = container.getBoundingClientRect();
+      setViewport({
+        width: Math.max(320, rect.width),
+        height: Math.max(320, rect.height),
+      });
+    };
+
+    updateViewport();
+
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  const viewportInnerW = Math.max(
+    320,
+    viewport.width - LEFT_GUTTER - RIGHT_GUTTER,
+  );
+  const viewportInnerH = Math.max(320, viewport.height);
+
+  const contentW = visualW + PADDING * 2;
+
+  const canvasW = Math.max(contentW, viewportInnerW);
+  const canvasH = viewportInnerH;
+
   const cx = canvasW / 2;
   const cy = canvasH / 2;
 
@@ -139,325 +426,605 @@ export const RingCanvas: React.FC = () => {
   const structBottom = cy + visualH / 2;
 
   // Pad Position Helper
-  const getPos = (side: Side, index: number, instances: Instance[]) => {
-    const isCounterClockwise = graph.ring_config?.placement_order === 'counterclockwise';
+  const getPos = useCallback(
+    (side: Side, index: number, instances: Instance[]) => {
+      // Simplified getPos ensuring we return Top-Left X/Y and W/H for the rect
+      let x = 0,
+        y = 0,
+        w = 0,
+        h = 0;
 
-    // Current Offset: sum of widths of all instances BEFORE this index
-    const preInstances = instances.slice(0, index);
-    const offset = preInstances.reduce((acc, i) => acc + getInstanceWidth(i), 0);
-    const myW = getInstanceWidth(instances[index]); 
+      // Width along the perimeter
+      const pWidth = getInstanceWidth(instances[index]);
 
-    // Corner Anchors (Inner edge of corners)
-    const anchorTopLeftX = structLeft + CORNER_SIZE;
-    const anchorTopRightY = structTop + CORNER_SIZE;
-    const anchorBottomRightX = structRight - CORNER_SIZE;
-    const anchorBottomLeftY = structBottom - CORNER_SIZE;
+      // Current Offset: sum of widths of all instances BEFORE this index
+      const preInstances = instances.slice(0, index);
+      const offset = preInstances.reduce(
+        (acc, i) => acc + getInstanceWidth(i),
+        0,
+      );
 
-    // Additional Anchors for Counter Clockwise
-    const anchorTopRightX = structRight - CORNER_SIZE;
-    const anchorBottomRightY = structBottom - CORNER_SIZE;
-    const anchorBottomLeftX = structLeft + CORNER_SIZE;
-    const anchorTopLeftY = structTop + CORNER_SIZE;
+      if (side === 'top') {
+        // Render Top: Pads have width=pWidth, height=PAD_H
+        // Origin: Top-Left of Chip Structure?
+        // Let's align them starting from LEFT + Corner to RIGHT.
+        // X = structLeft + Corner + Offset
+        // Y = structTop (or adjusted to center on ring thickness)
 
-    // Center deviation if Corner > PadH (to align outer edge or center)
-    // Visualizer shows outer alignment usually. Let's align outer edges.
-    // Top side: pads align with structTop
-    // Bottom side: pads align with structBottom - PAD_H
-    // Left side: pads align with structLeft
-    // Right side: pads align with structRight - PAD_H
-    
-    // Actually, CORNER_SIZE (78) vs PAD_H (72).
-    // If we align outer, Top pads y = structTop.
-    // If Corner is at structTop, it is bigger by 6px.
-    // If we align outer, inner edge is diff.
-    // Let's align centers of the "track".
-    // Track depth is CORNER_SIZE basically.
-    const centerDiff = (CORNER_SIZE - PAD_H_LOGICAL) / 2;
+        w = pWidth;
+        h = getInstanceThickness(instances[index]);
+        x = structLeft + CORNER_SIZE_VISUAL + offset;
+        y = structTop; // Align Top edge of ring
+      } else if (side === 'bottom') {
+        // Render Bottom: Left to Right
+        w = pWidth;
+        h = getInstanceThickness(instances[index]);
+        x = structLeft + CORNER_SIZE_VISUAL + offset;
+        y = structBottom - h; // Align Bottom edge (inner)
+      } else if (side === 'right') {
+        // Render Right: Top to Bottom?
+        // Start Y = structTop + Corner + Offset
+        // Check order: If backend Right is Bottom->Top, we should reverse visually?
+        // Let's assume standard visual flow Top->Bottom for now.
 
-    if (side === 'top') {
-      if (isCounterClockwise) {
-        // Top: R -> L (Start from anchorTopRightX, subtract offset)
-        return { 
-          x: anchorTopRightX - (offset + myW), 
-          y: structTop + centerDiff, 
-          w: myW, 
-          h: PAD_H_LOGICAL, 
-          rot: 0 
-        };
+        w = getInstanceThickness(instances[index]); // Width is thickness
+        h = pWidth; // Height is perimeter width
+
+        x = structRight - w; // Align Right edge (inner)
+        y = structTop + CORNER_SIZE_VISUAL + offset;
+      } else if (side === 'left') {
+        // Render Left: Top to Bottom
+        w = getInstanceThickness(instances[index]);
+        h = pWidth;
+
+        x = structLeft;
+        y = structTop + CORNER_SIZE_VISUAL + offset;
       }
-      return { 
-        x: anchorTopLeftX + offset, 
-        y: structTop + centerDiff, 
-        w: myW, 
-        h: PAD_H_LOGICAL, 
-        rot: 0 
-      };
-    } else if (side === 'right') {
-      if (isCounterClockwise) {
-        // Right: B -> T (Start from anchorBottomRightY, subtract offset)
-        return { 
-          x: (structRight - PAD_H_LOGICAL) - centerDiff, 
-          y: anchorBottomRightY - (offset + myW), 
-          w: PAD_H_LOGICAL, 
-          h: myW, 
-          rot: 90 
-        };
-      }
-      return { 
-        x: (structRight - PAD_H_LOGICAL) - centerDiff, 
-        y: anchorTopRightY + offset, 
-        w: PAD_H_LOGICAL, 
-        h: myW, 
-        rot: 90 
-      };
-    } else if (side === 'bottom') {
-      if (isCounterClockwise) {
-        // Bottom: L -> R (Start from anchorBottomLeftX, add offset)
-        return { 
-          x: anchorBottomLeftX + offset, 
-          y: (structBottom - PAD_H_LOGICAL) - centerDiff, 
-          w: myW, 
-          h: PAD_H_LOGICAL, 
-          rot: 0 
-        };
-      }
-      return { 
-        x: anchorBottomRightX - (offset + myW), 
-        y: (structBottom - PAD_H_LOGICAL) - centerDiff, 
-        w: myW, 
-        h: PAD_H_LOGICAL, 
-        rot: 0 
-      };
-    } else { // left
-       if (isCounterClockwise) {
-          // Left: T -> B (Start from anchorTopLeftY, add offset)
-          return { 
-            x: structLeft + centerDiff, 
-            y: anchorTopLeftY + offset, 
-            w: PAD_H_LOGICAL, 
-            h: myW, 
-            rot: 270 
-          };
-       }
-       return { 
-         x: structLeft + centerDiff, 
-         y: anchorBottomLeftY - (offset + myW), 
-         w: PAD_H_LOGICAL, 
-         h: myW, 
-         rot: 270 
-       };
+
+      return { x, y, w, h, rotation: 0 };
+    },
+    [
+      getInstanceWidth,
+      getInstanceThickness,
+      structLeft,
+      structTop,
+      structRight,
+      structBottom,
+      CORNER_SIZE_VISUAL,
+    ],
+  );
+
+  const instanceBounds = useMemo(() => {
+    const bounds = new Map<
+      string,
+      { x: number; y: number; w: number; h: number; side: Side | 'corner' }
+    >();
+
+    Object.entries(sides).forEach(([, instances]) => {
+      instances.forEach((inst, idx) => {
+        const { x, y, w, h } = getPos(inst.side as Side, idx, instances);
+        bounds.set(inst.id, { x, y, w, h, side: inst.side as Side });
+      });
+    });
+
+    if (corners.top_left) {
+      bounds.set(corners.top_left.id, {
+        x: structLeft,
+        y: structTop,
+        w: CORNER_SIZE_VISUAL,
+        h: CORNER_SIZE_VISUAL,
+        side: 'corner',
+      });
     }
-  };
+    if (corners.top_right) {
+      bounds.set(corners.top_right.id, {
+        x: structRight - CORNER_SIZE_VISUAL,
+        y: structTop,
+        w: CORNER_SIZE_VISUAL,
+        h: CORNER_SIZE_VISUAL,
+        side: 'corner',
+      });
+    }
+    if (corners.bottom_right) {
+      bounds.set(corners.bottom_right.id, {
+        x: structRight - CORNER_SIZE_VISUAL,
+        y: structBottom - CORNER_SIZE_VISUAL,
+        w: CORNER_SIZE_VISUAL,
+        h: CORNER_SIZE_VISUAL,
+        side: 'corner',
+      });
+    }
+    if (corners.bottom_left) {
+      bounds.set(corners.bottom_left.id, {
+        x: structLeft,
+        y: structBottom - CORNER_SIZE_VISUAL,
+        w: CORNER_SIZE_VISUAL,
+        h: CORNER_SIZE_VISUAL,
+        side: 'corner',
+      });
+    }
 
-  const DrawCorner = ({ inst, x, y }: { inst: Instance | null, x: number, y: number }) => {
+    return bounds;
+  }, [
+    sides,
+    corners,
+    structLeft,
+    structTop,
+    structRight,
+    structBottom,
+    CORNER_SIZE_VISUAL,
+    getPos,
+  ]);
+
+  const screenToWorld = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!svgRef.current) {
+        return { x: 0, y: 0 };
+      }
+      const ctm = svgRef.current.getScreenCTM();
+      if (!ctm) {
+        return { x: 0, y: 0 };
+      }
+
+      const sx = (clientX - ctm.e) / ctm.a;
+      const sy = (clientY - ctm.f) / ctm.d;
+
+      return {
+        x: (sx - viewOffset.x) / viewScale,
+        y: (sy - viewOffset.y) / viewScale,
+      };
+    },
+    [viewOffset.x, viewOffset.y, viewScale],
+  );
+
+  // --- Render ---
+
+  // Calculate Corner Positions
+  const cornTL_x = structLeft;
+  const cornTL_y = structTop;
+  const cornTR_x = structRight - CORNER_SIZE_VISUAL;
+  const cornTR_y = structTop;
+  const cornBR_x = structRight - CORNER_SIZE_VISUAL;
+  const cornBR_y = structBottom - CORNER_SIZE_VISUAL;
+  const cornBL_x = structLeft;
+  const cornBL_y = structBottom - CORNER_SIZE_VISUAL;
+
+  const DrawCorner = ({
+    inst,
+    x,
+    y,
+  }: {
+    inst: Instance | null;
+    x: number;
+    y: number;
+  }) => {
     if (!inst) {
       return (
-        <rect x={x} y={y} width={CORNER_SIZE} height={CORNER_SIZE} 
-          fill="#eee" stroke="#ccc" strokeDasharray="4" rx="4" />
+        <rect
+          x={x}
+          y={y}
+          width={CORNER_SIZE_VISUAL}
+          height={CORNER_SIZE_VISUAL}
+          fill="#eee"
+          stroke="#ccc"
+          strokeDasharray="4"
+          rx="4"
+        />
       );
     }
-    const color = getColor(inst.device, 'corner', inst.meta?.domain);
-    const isSelected = inst.id === selectedId;
+    const color = getColor(inst);
+    const isSelected = selectedIds.includes(inst.id);
 
     return (
-      <g 
-        onClick={(e) => { e.stopPropagation(); selectInstance(inst.id); }} 
+      <g
+        onClick={e => {
+          e.stopPropagation();
+          selectInstance(inst.id, e.ctrlKey || e.metaKey);
+        }}
         className="cursor-pointer hover:opacity-90"
       >
-        <rect 
-          x={x} y={y} width={CORNER_SIZE} height={CORNER_SIZE} 
-          fill={color} stroke={isSelected ? 'blue' : 'black'} strokeWidth={isSelected ? 3 : 2}
+        <rect
+          x={x}
+          y={y}
+          width={CORNER_SIZE_VISUAL}
+          height={CORNER_SIZE_VISUAL}
+          fill={color}
+          stroke={isSelected ? 'blue' : 'black'}
+          strokeWidth={isSelected ? 3 : 2}
         />
-        <text 
-          x={x + CORNER_SIZE/2} y={y + CORNER_SIZE/2} 
-          textAnchor="middle" dy=".3em" fontSize="10" fontWeight="bold"
+        <text
+          x={x + CORNER_SIZE_VISUAL / 2}
+          y={y + CORNER_SIZE_VISUAL / 2}
+          textAnchor="middle"
+          dy=".3em"
+          fontSize="8"
+          fontWeight="bold"
         >
-          CORNER
+          {inst.device || 'PCORNER'}
         </text>
       </g>
     );
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (panState) {
+      const dx = e.clientX - panState.startX;
+      const dy = e.clientY - panState.startY;
+      setViewOffset({
+        x: panState.originX + dx,
+        y: panState.originY + dy,
+      });
+      return;
+    }
+
+    if (selectionBox) {
+      const world = screenToWorld(e.clientX, e.clientY);
+      setSelectionBox(prev =>
+        prev
+          ? {
+              ...prev,
+              endX: world.x,
+              endY: world.y,
+            }
+          : prev,
+      );
+      return;
+    }
+
     if (!draggingId || !svgRef.current) return;
-    const instance = graph.instances.find((i: Instance) => i.id === draggingId);
-    if (!instance || (instance.side as any) === 'corner') return;
+    const instance = graph.instances.find(i => i.id === draggingId);
+    if (!instance) return;
 
-    const CTM = svgRef.current.getScreenCTM();
-    if (!CTM) return;
-    const mx = (e.clientX - CTM.e) / CTM.a;
-    const my = (e.clientY - CTM.f) / CTM.d;
+    const world = screenToWorld(e.clientX, e.clientY);
+    const mx = world.x;
+    const my = world.y;
 
-    // Detect closest side
-    const trackCenterOffset = CORNER_SIZE / 2;
-    const yTop = structTop + trackCenterOffset;
-    const yBottom = structBottom - trackCenterOffset;
-    const xLeft = structLeft + trackCenterOffset;
-    const xRight = structRight - trackCenterOffset;
+    if ((instance.side as any) === 'corner') {
+      const cornerAnchors = [
+        {
+          location: 'top_left' as const,
+          x: cornTL_x + CORNER_SIZE_VISUAL / 2,
+          y: cornTL_y + CORNER_SIZE_VISUAL / 2,
+        },
+        {
+          location: 'top_right' as const,
+          x: cornTR_x + CORNER_SIZE_VISUAL / 2,
+          y: cornTR_y + CORNER_SIZE_VISUAL / 2,
+        },
+        {
+          location: 'bottom_right' as const,
+          x: cornBR_x + CORNER_SIZE_VISUAL / 2,
+          y: cornBR_y + CORNER_SIZE_VISUAL / 2,
+        },
+        {
+          location: 'bottom_left' as const,
+          x: cornBL_x + CORNER_SIZE_VISUAL / 2,
+          y: cornBL_y + CORNER_SIZE_VISUAL / 2,
+        },
+      ];
+
+      let nearest = cornerAnchors[0];
+      let nearestDist =
+        (mx - nearest.x) * (mx - nearest.x) +
+        (my - nearest.y) * (my - nearest.y);
+
+      for (let i = 1; i < cornerAnchors.length; i++) {
+        const anchor = cornerAnchors[i];
+        const dist =
+          (mx - anchor.x) * (mx - anchor.x) + (my - anchor.y) * (my - anchor.y);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = anchor;
+        }
+      }
+
+      moveCornerInstance(instance.id, nearest.location);
+      return;
+    }
+
+    const yTop = structTop + CORNER_SIZE_VISUAL / 2;
+    const yBottom = structBottom - CORNER_SIZE_VISUAL / 2;
+    const xLeft = structLeft + CORNER_SIZE_VISUAL / 2;
+    const xRight = structRight - CORNER_SIZE_VISUAL / 2;
 
     const distTop = Math.abs(my - yTop);
+    const distRight = Math.abs(mx - xRight);
     const distBottom = Math.abs(my - yBottom);
     const distLeft = Math.abs(mx - xLeft);
-    const distRight = Math.abs(mx - xRight);
 
-    let minD = distTop;
     let closestSide: Side = 'top';
-
-    if (distRight < minD) { minD = distRight; closestSide = 'right'; }
-    if (distBottom < minD) { minD = distBottom; closestSide = 'bottom'; }
-    if (distLeft < minD) { minD = distLeft; closestSide = 'left'; }
-
-    // Calc index
-    const insts = sides[closestSide];
-    const total = insts.length;
-
-    // Anchor Logic Replica
-    const anchorTopLeftX = structLeft + CORNER_SIZE;
-    const anchorTopRightY = structTop + CORNER_SIZE;
-    const anchorBottomRightX = structRight - CORNER_SIZE;
-    const anchorBottomLeftY = structBottom - CORNER_SIZE;
-
-    const anchorTopRightX = structRight - CORNER_SIZE;
-    const anchorBottomRightY = structBottom - CORNER_SIZE;
-    const anchorBottomLeftX = structLeft + CORNER_SIZE;
-    const anchorTopLeftY = structTop + CORNER_SIZE;
-
-    const isCounterClockwise = graph.ring_config?.placement_order === 'counterclockwise';
-
-    let dist = 0;
-    if (closestSide === 'top') {
-         if (isCounterClockwise) dist = anchorTopRightX - mx;
-         else dist = mx - anchorTopLeftX;
-    } 
-    else if (closestSide === 'right')  {
-         if (isCounterClockwise) dist = anchorBottomRightY - my;
-         else dist = my - anchorTopRightY;
+    let minDist = distTop;
+    if (distRight < minDist) {
+      minDist = distRight;
+      closestSide = 'right';
     }
-    else if (closestSide === 'bottom') {
-         if (isCounterClockwise) dist = mx - anchorBottomLeftX;
-         else dist = anchorBottomRightX - mx;
+    if (distBottom < minDist) {
+      minDist = distBottom;
+      closestSide = 'bottom';
     }
-    else if (closestSide === 'left') {
-         if (isCounterClockwise) dist = my - anchorTopLeftY;
-         else dist = anchorBottomLeftY - my;
+    if (distLeft < minDist) {
+      closestSide = 'left';
     }
-    
-    if (dist < 0) dist = 0;
 
-    let currentX = 0;
-    let foundIndex = 0; 
-    let placed = false;
-    
-    for (let i = 0; i < total; i++) {
-        const w = getInstanceWidth(insts[i]);
-        // Simple center-based pivot
-        if (dist < currentX + w / 2) {
-            foundIndex = i;
-            placed = true;
-            break;
-        }
-        currentX += w;
-    }
-    if (!placed) foundIndex = total;
+    const sideInsts = sides[closestSide];
+    const filteredSideInsts = sideInsts.filter(inst => inst.id !== draggingId);
 
-    // Only update if changed
-    if (closestSide !== instance.side || foundIndex !== instance.order) {
-       moveInstance(draggingId, closestSide, foundIndex);
+    let trackPos = 0;
+    if (closestSide === 'top' || closestSide === 'bottom') {
+      const start = structLeft + CORNER_SIZE_VISUAL;
+      trackPos = mx - start;
+    } else {
+      const start = structTop + CORNER_SIZE_VISUAL;
+      trackPos = my - start;
+    }
+    if (trackPos < 0) trackPos = 0;
+
+    let newIndex = filteredSideInsts.length;
+    let cumulative = 0;
+    for (let i = 0; i < filteredSideInsts.length; i++) {
+      const width = getInstanceWidth(filteredSideInsts[i]);
+      if (trackPos < cumulative + width / 2) {
+        newIndex = i;
+        break;
+      }
+      cumulative += width;
+    }
+
+    const oldSide = instance.side as Side;
+    const oldIndex = sideInsts.findIndex(inst => inst.id === draggingId);
+    if (closestSide !== oldSide || newIndex !== oldIndex) {
+      moveInstance(instance.id, closestSide, newIndex);
     }
   };
 
-  const handleMouseUp = () => setDraggingId(null);
+  const handleMouseUp = () => {
+    if (selectionBox) {
+      const minX = Math.min(selectionBox.startX, selectionBox.endX);
+      const maxX = Math.max(selectionBox.startX, selectionBox.endX);
+      const minY = Math.min(selectionBox.startY, selectionBox.endY);
+      const maxY = Math.max(selectionBox.startY, selectionBox.endY);
 
-  // Constants for corners
-  const cornTL_x = structLeft; const cornTL_y = structTop;
-  const cornTR_x = structRight - CORNER_SIZE; const cornTR_y = structTop;
-  const cornBR_x = structRight - CORNER_SIZE; const cornBR_y = structBottom - CORNER_SIZE;
-  const cornBL_x = structLeft; const cornBL_y = structBottom - CORNER_SIZE;
+      const width = maxX - minX;
+      const height = maxY - minY;
+
+      if (width < 2 || height < 2) {
+        if (!selectionBox.additive) {
+          clearSelection();
+        }
+      } else {
+        const ids = Array.from(instanceBounds.entries())
+          .filter(([, b]) => {
+            const bx2 = b.x + b.w;
+            const by2 = b.y + b.h;
+            return !(bx2 < minX || b.x > maxX || by2 < minY || b.y > maxY);
+          })
+          .map(([id]) => id);
+
+        selectInstances(ids, selectionBox.additive);
+      }
+
+      setSelectionBox(null);
+    }
+
+    setPanState(null);
+    setDraggingId(null);
+  };
+
+  const handleWheel = useCallback(
+    (e: React.WheelEvent<SVGSVGElement>) => {
+      if (!svgRef.current) return;
+
+      e.preventDefault();
+      const ctm = svgRef.current.getScreenCTM();
+      if (!ctm) return;
+
+      const sx = (e.clientX - ctm.e) / ctm.a;
+      const sy = (e.clientY - ctm.f) / ctm.d;
+
+      const worldX = (sx - viewOffset.x) / viewScale;
+      const worldY = (sy - viewOffset.y) / viewScale;
+
+      const zoomFactor = Math.exp(-e.deltaY * WHEEL_ZOOM_SENSITIVITY);
+      const nextScale = Math.max(
+        MIN_VIEW_SCALE,
+        Math.min(MAX_VIEW_SCALE, viewScale * zoomFactor),
+      );
+
+      if (Math.abs(nextScale - viewScale) < 1e-6) {
+        return;
+      }
+
+      const nextOffset = {
+        x: sx - worldX * nextScale,
+        y: sy - worldY * nextScale,
+      };
+
+      setViewScale(nextScale);
+      setViewOffset(nextOffset);
+    },
+    [viewOffset.x, viewOffset.y, viewScale],
+  );
 
   return (
-    <div className="flex-1 bg-gray-50 flex items-center justify-center overflow-auto p-4">
-      <svg 
+    <div
+      ref={containerRef}
+      className="flex-1 min-w-0 min-h-0 bg-gray-50 flex items-stretch justify-start overflow-hidden pl-5 pr-3 py-0"
+    >
+      <svg
         ref={svgRef}
-        width={canvasW} height={canvasH} 
-        style={{ minWidth: canvasW, minHeight: canvasH }}
+        width={canvasW}
+        height={canvasH}
         className="bg-white shadow-xl rounded-lg select-none"
+        onMouseDown={e => {
+          if (e.target === e.currentTarget) {
+            if (e.button === 1) {
+              e.preventDefault();
+              setPanState({
+                startX: e.clientX,
+                startY: e.clientY,
+                originX: viewOffset.x,
+                originY: viewOffset.y,
+              });
+              return;
+            }
+
+            if (e.button !== 0) {
+              return;
+            }
+
+            const world = screenToWorld(e.clientX, e.clientY);
+            setSelectionBox({
+              startX: world.x,
+              startY: world.y,
+              endX: world.x,
+              endY: world.y,
+              additive: e.ctrlKey || e.metaKey,
+            });
+          }
+        }}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
         viewBox={`0 0 ${canvasW} ${canvasH}`}
+        style={{
+          minWidth: canvasW,
+          minHeight: canvasH,
+          cursor: panState ? 'grabbing' : draggingId ? 'grabbing' : 'crosshair',
+        }}
       >
-         <defs>
-           <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
-             <path d="M 20 0 L 0 0 0 20" fill="none" stroke="gray" strokeWidth="0.5" strokeOpacity="0.1"/>
-           </pattern>
-         </defs>
-         <rect width="100%" height="100%" fill="url(#grid)" />
+        <defs>
+          <pattern
+            id="grid"
+            width="20"
+            height="20"
+            patternUnits="userSpaceOnUse"
+          >
+            <path
+              d="M 20 0 L 0 0 0 20"
+              fill="none"
+              stroke="gray"
+              strokeWidth="0.5"
+              strokeOpacity="0.1"
+            />
+          </pattern>
+        </defs>
+        <g
+          transform={`translate(${viewOffset.x}, ${viewOffset.y}) scale(${viewScale})`}
+        >
+          <rect
+            width="100%"
+            height="100%"
+            fill="url(#grid)"
+            pointerEvents="none"
+          />
 
-        {/* --- Corners --- */}
-        <DrawCorner inst={corners.top_left} x={cornTL_x} y={cornTL_y} />
-        <DrawCorner inst={corners.top_right} x={cornTR_x} y={cornTR_y} />
-        <DrawCorner inst={corners.bottom_right} x={cornBR_x} y={cornBR_y} />
-        <DrawCorner inst={corners.bottom_left} x={cornBL_x} y={cornBL_y} />
+          <DrawCorner inst={corners.top_left} x={cornTL_x} y={cornTL_y} />
+          <DrawCorner inst={corners.top_right} x={cornTR_x} y={cornTR_y} />
+          <DrawCorner inst={corners.bottom_right} x={cornBR_x} y={cornBR_y} />
+          <DrawCorner inst={corners.bottom_left} x={cornBL_x} y={cornBL_y} />
 
-        {/* --- Sides --- */}
-        {Object.entries(sides).map(([sideName, instances]) => (
-          <g key={sideName}>
-            {instances.map((inst, idx) => {
-              const { x, y, w, h } = getPos(inst.side as Side, idx, instances);
+          {Object.entries(sides).map(([sideName, instances]) => (
+            <g key={sideName}>
+              {instances.map((inst, idx) => {
+                const { x, y, w, h } = getPos(
+                  inst.side as Side,
+                  idx,
+                  instances,
+                );
 
-              const isSelected = inst.id === selectedId;
-              const color = getColor(inst.device, inst.type, inst.meta?.domain);
-              
-              const isVerticalBlock = (sideName === 'top' || sideName === 'bottom');
-              const textRot = isVerticalBlock ? 90 : 0;
-              
-              const isFiller = inst.type === 'filler' || inst.device.includes('FILLER');
-              const isSpace = inst.type === 'space';
-              const displayName = isFiller ? 'FILLER' : (inst.name.length > 8 ? inst.name.substr(0, 6)+'..' : inst.name);
+                const isSelected = selectedIds.includes(inst.id);
+                const color = getColor(inst);
+                const category = getDeviceCategory(inst);
 
-              const strokeColor = isSelected ? 'blue' : (isSpace ? '#ccc' : 'black');
-              const strokeWidth = isSelected ? 3 : 1;
-              const strokeDash = isSpace ? '4 2' : undefined;
+                const isSpace = inst.type === 'space';
+                const isBlank = category === 'blank';
+                const label = getInstanceLabel(inst);
+                const textRotation = getTextRotation(inst.side as Side);
 
-              return (
-                <g 
-                  key={inst.id}
-                  transform={`translate(${x}, ${y})`}
-                  onMouseDown={(e) => { e.stopPropagation(); selectInstance(inst.id); setDraggingId(inst.id); }}
-                  className={clsx("cursor-pointer", draggingId === inst.id && "opacity-70")}
-                >
-                  <rect 
-                    width={w} height={h} 
-                    fill={color} 
-                    stroke={strokeColor} 
-                    strokeWidth={strokeWidth}
-                    strokeDasharray={strokeDash}
-                    className="transition-colors hover:brightness-110"
-                  />
-                  
-                  {/* Label */}
-                  {!isFiller && !isSpace && (
-                  <g transform={`translate(${w/2}, ${h/2}) rotate(${textRot})`}>
-                    <text 
-                      textAnchor="middle" 
-                      className="font-mono font-bold pointer-events-none"
-                      style={{ fontSize: '10px' }}
-                    >
-                      <tspan x="0" dy="-0.2em">{displayName}</tspan>
-                      <tspan x="0" dy="1.1em" fontSize="8" fill="#444">{inst.device}</tspan>
-                    </text>
+                const strokeColor = isSelected
+                  ? 'blue'
+                  : isSpace
+                  ? '#ccc'
+                  : 'black';
+                const strokeWidth = isSelected ? 3 : 2;
+                const strokeDash = isSpace || isBlank ? '4 2' : undefined;
+                const fontSize =
+                  category === 'corner'
+                    ? 8
+                    : category === 'filler' || category === 'blank'
+                    ? 6
+                    : 7;
+
+                return (
+                  <g
+                    key={inst.id}
+                    transform={`translate(${x}, ${y})`}
+                    onClick={e => {
+                      e.stopPropagation();
+                    }}
+                    onMouseDown={e => {
+                      if (e.button !== 0) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const additive = e.ctrlKey || e.metaKey;
+                      selectInstance(inst.id, additive);
+                      if (!additive) {
+                        setDraggingId(inst.id);
+                      }
+                    }}
+                    className={clsx(
+                      'cursor-pointer',
+                      draggingId === inst.id && 'opacity-70',
+                    )}
+                  >
+                    <rect
+                      width={w}
+                      height={h}
+                      fill={color}
+                      stroke={strokeColor}
+                      strokeWidth={strokeWidth}
+                      strokeDasharray={strokeDash}
+                      fillOpacity={category === 'blank' ? 0 : 0.8}
+                      className="transition-colors"
+                    />
+
+                    {!isSpace && !isBlank && (
+                      <g
+                        transform={`translate(${w / 2}, ${
+                          h / 2
+                        }) rotate(${textRotation})`}
+                      >
+                        <text
+                          textAnchor="middle"
+                          dy=".3em"
+                          className="font-mono pointer-events-none select-none"
+                          style={{ fontSize: `${fontSize}px`, fill: '#000' }}
+                        >
+                          {label}
+                        </text>
+                      </g>
+                    )}
                   </g>
-                  )}
-                  {isFiller && (
-                    <g transform={`translate(${w/2}, ${h/2}) rotate(${textRot})`}>
-                       <text textAnchor="middle" dy="0.3em" fontSize="8" fill="#666">F</text>
-                    </g>
-                  )}
-                </g>
-              );
-            })}
-          </g>
-        ))}
+                );
+              })}
+            </g>
+          ))}
+
+          {selectionBox && (
+            <rect
+              x={Math.min(selectionBox.startX, selectionBox.endX)}
+              y={Math.min(selectionBox.startY, selectionBox.endY)}
+              width={Math.abs(selectionBox.endX - selectionBox.startX)}
+              height={Math.abs(selectionBox.endY - selectionBox.startY)}
+              fill="rgba(59,130,246,0.12)"
+              stroke="#3B82F6"
+              strokeDasharray="4 3"
+              strokeWidth={1}
+              pointerEvents="none"
+            />
+          )}
+        </g>
       </svg>
     </div>
   );

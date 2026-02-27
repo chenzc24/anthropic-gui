@@ -5,10 +5,7 @@ export interface PromptRequest extends ApiSettingOptions {
   signal?: AbortSignal;
 }
 
-export const submitPrompt = async ({
-  prompt,
-  signal,
-}: PromptRequest) => {
+export const submitPrompt = async ({ prompt, signal }: PromptRequest) => {
   // [MODIFIED] Use new agent endpoint for normal chat
   const requestBody = {
     prompt,
@@ -28,10 +25,16 @@ export const submitPrompt = async ({
   try {
     const response = await fetch(`/api/agent/chat`, requestOptions);
 
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(
+        text || `Chat request failed with status ${response.status}`,
+      );
+    }
+
     return response;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(error);
+    throw error;
   }
 };
 
@@ -46,8 +49,37 @@ export const submitInput = async (value: string) => {
 
   try {
     const response = await fetch(`/api/agent/submit_input`, requestOptions);
-    return response.json();
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(
+        text || `Input submit failed with status ${response.status}`,
+      );
+    }
+
+    return await response.json();
   } catch (error) {
-    console.error(error);
+    throw error;
   }
+};
+
+export const submitEditorConfirm = async (sourcePath: string, data: any) => {
+  const requestOptions = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      source_path: sourcePath,
+      data,
+    }),
+  };
+
+  const response = await fetch(`/api/agent/editor/confirm`, requestOptions);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Confirm failed with status ${response.status}`);
+  }
+
+  return response.json();
 };
