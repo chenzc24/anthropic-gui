@@ -1,8 +1,10 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import classNames from 'classnames';
-import { Upload } from 'lucide-react';
+import { Download, Paperclip, Upload } from 'lucide-react';
 import 'prismjs/themes/prism-funky.min.css';
+import { createPortal } from 'react-dom';
+import { useParams } from 'react-router-dom';
 import markdown from 'remark-parse';
 import { remarkToSlate } from 'remark-slate-transformer';
 import {
@@ -25,8 +27,11 @@ import {
   withReact,
 } from 'slate-react';
 import { unified } from 'unified';
+import { v4 as uuidv4 } from 'uuid';
 
 import { uploadFile } from '@/api/files.api';
+import { addHumanAttachmentsToContent } from '@/redux/conversations/conversationsSlice';
+import { useAppDispatch } from '@/redux/hooks';
 import { IconComponent } from '@/ui/IconComponent';
 
 import { AgentSteps } from './AgentSteps';
@@ -38,17 +43,35 @@ import { CustomElement, CustomRange, IEditablePrompt } from './typings';
 
 import styles from './Prompts.module.scss';
 
+const normalizeClientFileUrl = (rawUrl?: string): string => {
+  const normalized = (rawUrl || '').trim();
+  if (!normalized) return '';
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (normalized.startsWith('/')) return normalized;
+  if (normalized.startsWith('./')) return `/${normalized.slice(2)}`;
+  return `/${normalized}`;
+};
+
 export const EditablePrompt = memo(
   ({
     text = '',
+    fullReasoningText,
+    messageVersion,
+    mainText,
     deletePromptRow,
     id,
     type,
     handlePromptBlur,
     readOnly,
     deleteDisabled,
+    hideActions,
+    hideHumanUpload,
+    displayOnlyHuman,
     steps,
+    humanAttachments,
   }: IEditablePrompt) => {
+    const { id: chatId = '' } = useParams();
+    const dispatch = useAppDispatch();
     const editor = useMemo(() => withHistory(withReact(createEditor())), []);
 
     const valueRef = useRef<Descendant[]>([
@@ -63,7 +86,45 @@ export const EditablePrompt = memo(
       navigator.clipboard.writeText(textToCopy);
     };
 
+    const [previewAttachment, setPreviewAttachment] = useState<{
+      name: string;
+      url: string;
+      category?: string;
+      path: string;
+    } | null>(null);
+    const [previewText, setPreviewText] = useState<string>('');
+
+    const hasMeaningfulText = useCallback((value?: string) => {
+      if (!value) return false;
+      const normalized = value.trim();
+      return !['', '{}', '[]', 'null', 'undefined', 'None'].includes(
+        normalized,
+      );
+    }, []);
+
+    const shouldUseStructuredAssistant =
+      type === 'Assistant' && messageVersion === 2;
+
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const detectAttachmentCategory = useCallback(
+      (name: string, mime?: string) => {
+        if (mime?.startsWith('image/')) return 'image';
+        const lower = name.toLowerCase();
+        if (lower.endsWith('.csv')) return 'csv';
+        if (lower.endsWith('.json')) return 'json';
+        if (/(\.txt|\.md|\.log)$/i.test(lower)) return 'text';
+        if (
+          /(\.py|\.js|\.ts|\.tsx|\.jsx|\.c|\.cpp|\.h|\.java|\.go|\.rs|\.sh|\.css|\.html)$/i.test(
+            lower,
+          )
+        ) {
+          return 'code';
+        }
+        return 'other';
+      },
+      [],
+    );
 
     const handleUploadClick = useCallback(() => {
       fileInputRef.current?.click();
@@ -71,34 +132,111 @@ export const EditablePrompt = memo(
 
     const handleFileChange = useCallback(
       async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
+        const files = Array.from(event.target.files || []);
+        if (!files.length) return;
 
-        try {
-          const placeholder = `\n[Uploading ${file.name}...]`;
-          Transforms.insertText(editor, placeholder);
+        const uploadedAttachments: Array<{
+          id: string;
+          name: string;
+          path: string;
+          url: string;
+          mimeType?: string;
+          category?: 'image' | 'text' | 'code' | 'csv' | 'json' | 'other';
+          size?: number;
+          timestamp: number;
+        }> = [];
 
-          const fileInfo = (await uploadFile(file)) as any;
+        for (const file of files) {
+          try {
+            const placeholder = `\n[Uploading ${file.name}...]`;
+            Transforms.insertText(editor, placeholder);
 
-          // Use a more descriptive format so the agent knows the original filename
-          const fName = fileInfo.filename || file.name;
-          const fPath = fileInfo.filepath || fileInfo;
-          Transforms.insertText(editor, `\n[File: ${fName} (Path: ${fPath})]`);
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.error('File upload failed:', error);
-          Transforms.insertText(
-            editor,
-            `\n[Error uploading ${file.name}: ${String(error)}]`,
-          );
-        } finally {
-          if (fileInputRef.current) {
-            fileInputRef.current.value = '';
+            const fileInfo = (await uploadFile(file)) as any;
+            const fName = fileInfo.filename || file.name;
+            const fPath = fileInfo.filepath || '';
+            const fUrl = fileInfo.url || fPath;
+
+            Transforms.insertText(
+              editor,
+              `\n[File: ${fName} (Path: ${fPath})]`,
+            );
+
+            uploadedAttachments.push({
+              id: uuidv4(),
+              name: fName,
+              path: fPath,
+              url: fUrl,
+              mimeType: file.type || undefined,
+              category: detectAttachmentCategory(fName, file.type) as
+                | 'image'
+                | 'text'
+                | 'code'
+                | 'csv'
+                | 'json'
+                | 'other',
+              size: file.size,
+              timestamp: Date.now(),
+            });
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('File upload failed:', error);
+            Transforms.insertText(
+              editor,
+              `\n[Error uploading ${file.name}: ${String(error)}]`,
+            );
           }
         }
+
+        if (uploadedAttachments.length > 0 && chatId && type === 'Human') {
+          dispatch(
+            addHumanAttachmentsToContent({
+              chatId,
+              contentId: id,
+              attachments: uploadedAttachments,
+            }),
+          );
+        }
+
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       },
-      [editor],
+      [chatId, detectAttachmentCategory, dispatch, editor, id, type],
     );
+
+    useEffect(() => {
+      const fetchTextPreview = async () => {
+        if (!previewAttachment) {
+          setPreviewText('');
+          return;
+        }
+
+        const isTextLike = ['text', 'code', 'csv', 'json'].includes(
+          previewAttachment.category || '',
+        );
+
+        const previewUrl = normalizeClientFileUrl(previewAttachment.url);
+
+        if (!isTextLike || !previewUrl) {
+          setPreviewText('');
+          return;
+        }
+
+        try {
+          const response = await fetch(previewUrl);
+          const textContent = await response.text();
+          setPreviewText(textContent.slice(0, 50000));
+        } catch (error) {
+          setPreviewText(
+            `Failed to load preview: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      };
+
+      fetchTextPreview();
+    }, [previewAttachment]);
 
     const renderLeaf = useCallback(
       (props: RenderLeafProps) => <CodeLeaf {...props} />,
@@ -215,8 +353,8 @@ export const EditablePrompt = memo(
     );
 
     useEffect(() => {
-      // If we are showing MarkdownDisplay (Assistant mode), do not try to manipulate the hidden editor state
-      if (type === 'Assistant') {
+      // If we are showing MarkdownDisplay, do not manipulate hidden editor state
+      if (type === 'Assistant' || (type === 'Human' && displayOnlyHuman)) {
         return;
       }
 
@@ -241,10 +379,10 @@ export const EditablePrompt = memo(
         Transforms.insertNodes(editor, transformedResult as Descendant[]);
         valueRef.current = transformedResult as Descendant[];
       }
-    }, [text, editor, type]);
+    }, [text, editor, type, displayOnlyHuman]);
 
     const persistCurrentPrompt = useCallback(() => {
-      if (type !== 'Human') {
+      if (type !== 'Human' || displayOnlyHuman) {
         return;
       }
 
@@ -259,11 +397,14 @@ export const EditablePrompt = memo(
 
       const markdownText = serialize(currentValue);
       handlePromptBlur(id, markdownText);
-    }, [editor, handlePromptBlur, id, type]);
+    }, [editor, handlePromptBlur, id, type, displayOnlyHuman]);
 
     const onBlur = useCallback(() => {
+      if (displayOnlyHuman) {
+        return;
+      }
       persistCurrentPrompt();
-    }, [persistCurrentPrompt]);
+    }, [displayOnlyHuman, persistCurrentPrompt]);
 
     useEffect(
       () => () => {
@@ -491,82 +632,214 @@ export const EditablePrompt = memo(
 
     return (
       <div className={styles.promptContainer}>
-        {type === 'Human' ? (
-          <div>
-            <IconComponent type="human" />
-          </div>
-        ) : (
-          <div>
-            <IconComponent type="ai" />
-          </div>
-        )}
-        <div className={styles.fieldContainer}>
-          <div className={styles.promptContainerHeader}>
-            {type === 'Human' ? (
-              <div className={styles.placeholderText}>You</div>
-            ) : (
-              <div className={styles.placeholderText}>AI</div>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {type === 'Human' && (
-                <>
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    style={{ display: 'none' }}
-                    onChange={handleFileChange}
-                  />
+        <div className={styles.promptMainRow}>
+          {type === 'Human' ? (
+            <div className={styles.promptAvatarColumn}>
+              <IconComponent type="human" />
+            </div>
+          ) : (
+            <div className={styles.promptAvatarColumn}>
+              <IconComponent type="ai" />
+            </div>
+          )}
+          <div className={styles.fieldContainer}>
+            <div
+              className={classNames(styles.promptContainerHeader, {
+                [styles.promptContainerHeaderOverlay]: hideActions,
+              })}
+            >
+              {type === 'Human' ? (
+                <div className={styles.placeholderText}>You</div>
+              ) : (
+                <div className={styles.placeholderText}>AI</div>
+              )}
+              {!hideActions && (
+                <div
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
+                  {type === 'Human' && !hideHumanUpload && (
+                    <>
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        style={{ display: 'none' }}
+                        multiple
+                        accept=".csv,.png,.txt,.md,.json,.jpg,.jpeg,.gif,.webp,.py,.js,.ts,.tsx,.sh,.yaml,.yml"
+                        onChange={handleFileChange}
+                      />
+                      <div
+                        className={classNames(styles.iconDelete, {
+                          [styles.iconDeleteDisabled]: readOnly,
+                        })}
+                        onClick={readOnly ? undefined : handleUploadClick}
+                        title="Upload File"
+                        style={{ cursor: readOnly ? 'not-allowed' : 'pointer' }}
+                      >
+                        <Upload size={18} />
+                      </div>
+                    </>
+                  )}
                   <div
                     className={classNames(styles.iconDelete, {
-                      [styles.iconDeleteDisabled]: readOnly,
+                      [styles.iconDeleteDisabled]: readOnly || deleteDisabled,
                     })}
-                    onClick={readOnly ? undefined : handleUploadClick}
-                    title="Upload File"
-                    style={{ cursor: readOnly ? 'not-allowed' : 'pointer' }}
+                    onClick={
+                      readOnly || deleteDisabled
+                        ? undefined
+                        : deletePromptRow(id)
+                    }
                   >
-                    <Upload size={18} />
+                    <IconComponent type="deleteIcon" />
                   </div>
-                </>
+                </div>
               )}
-              <div
-                className={classNames(styles.iconDelete, {
-                  [styles.iconDeleteDisabled]: readOnly || deleteDisabled,
-                })}
-                onClick={
-                  readOnly || deleteDisabled ? undefined : deletePromptRow(id)
-                }
-              >
-                <IconComponent type="deleteIcon" />
+            </div>
+            {valueRef.current ? (
+              <>
+                {steps && steps.length > 0 && <AgentSteps steps={steps} />}
+                {type === 'Assistant' ? (
+                  shouldUseStructuredAssistant ? (
+                    <div className={styles.assistantStructuredContainer}>
+                      <div className={styles.assistantPrimaryBlock}>
+                        {hasMeaningfulText(mainText) ? (
+                          <MarkdownDisplay content={mainText || ''} />
+                        ) : (
+                          <div className={styles.assistantPrimaryPlaceholder}>
+                            Waiting for primary answer...
+                          </div>
+                        )}
+                      </div>
+
+                      {hasMeaningfulText(fullReasoningText || text) && (
+                        <details className={styles.assistantDetailsCollapse}>
+                          <summary className={styles.assistantDetailsSummary}>
+                            <span>Full reasoning</span>
+                            <span className={styles.assistantDetailsCount}>
+                              streaming
+                            </span>
+                          </summary>
+                          <div className={styles.assistantDetailsBody}>
+                            <div className={styles.assistantStreamContainer}>
+                              <MarkdownDisplay
+                                content={fullReasoningText || text}
+                              />
+                            </div>
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  ) : (
+                    <MarkdownDisplay content={text} />
+                  )
+                ) : displayOnlyHuman ? (
+                  hasMeaningfulText(text) ? (
+                    <MarkdownDisplay content={text} />
+                  ) : null
+                ) : (
+                  <Slate
+                    editor={editor}
+                    initialValue={valueRef.current}
+                    onChange={onChange}
+                  >
+                    <Editable
+                      spellCheck={false}
+                      renderElement={renderElement}
+                      className={styles.promptField}
+                      onBlur={onBlur}
+                      renderLeaf={renderLeaf}
+                      decorate={decorate}
+                      onKeyDown={onKeyDown}
+                      readOnly={readOnly}
+                      onPaste={handlePaste}
+                    />
+                  </Slate>
+                )}
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        {type === 'Human' && !!humanAttachments?.length && (
+          <div className={styles.promptAttachmentRow}>
+            <div className={styles.promptAvatarColumn} />
+            <div className={styles.attachmentBox}>
+              <div className={styles.attachmentTitle}>Attachments</div>
+              <div className={styles.attachmentList}>
+                {humanAttachments.map(attachment => (
+                  <div key={attachment.id} className={styles.attachmentItem}>
+                    <button
+                      className={styles.attachmentPreviewBtn}
+                      type="button"
+                      onClick={() =>
+                        setPreviewAttachment({
+                          name: attachment.name,
+                          url: attachment.url,
+                          category: attachment.category,
+                          path: attachment.path,
+                        })
+                      }
+                    >
+                      <Paperclip size={14} />
+                      <span>{attachment.name}</span>
+                    </button>
+                    <a
+                      href={normalizeClientFileUrl(attachment.url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={styles.attachmentDownloadLink}
+                    >
+                      <Download size={14} />
+                      <span>Download</span>
+                    </a>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
-          {valueRef.current ? (
-            <>
-              {steps && steps.length > 0 && <AgentSteps steps={steps} />}
-              {type === 'Assistant' ? (
-                <MarkdownDisplay content={text} />
-              ) : (
-                <Slate
-                  editor={editor}
-                  initialValue={valueRef.current}
-                  onChange={onChange}
-                >
-                  <Editable
-                    spellCheck={false}
-                    renderElement={renderElement}
-                    className={styles.promptField}
-                    onBlur={onBlur}
-                    renderLeaf={renderLeaf}
-                    decorate={decorate}
-                    onKeyDown={onKeyDown}
-                    readOnly={readOnly}
-                    onPaste={handlePaste}
-                  />
-                </Slate>
-              )}
-            </>
-          ) : null}
-        </div>
+        )}
+
+        {previewAttachment &&
+          typeof document !== 'undefined' &&
+          createPortal(
+            <div
+              className={styles.attachmentPreviewOverlay}
+              onClick={() => setPreviewAttachment(null)}
+            >
+              <div
+                className={styles.attachmentPreviewModal}
+                onClick={event => event.stopPropagation()}
+              >
+                <div className={styles.attachmentPreviewHeader}>
+                  <strong>{previewAttachment.name}</strong>
+                  <button
+                    className={styles.attachmentPreviewClose}
+                    type="button"
+                    onClick={() => setPreviewAttachment(null)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className={styles.attachmentPreviewBody}>
+                  {previewAttachment.category === 'image' ? (
+                    <img
+                      src={normalizeClientFileUrl(previewAttachment.url)}
+                      alt={previewAttachment.name}
+                      className={styles.attachmentPreviewImage}
+                    />
+                  ) : previewText ? (
+                    <pre className={styles.attachmentPreviewText}>
+                      <code>{previewText}</code>
+                    </pre>
+                  ) : (
+                    <div className={styles.attachmentPreviewFallback}>
+                      Preview unavailable. Path: {previewAttachment.path}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )}
       </div>
     );
   },

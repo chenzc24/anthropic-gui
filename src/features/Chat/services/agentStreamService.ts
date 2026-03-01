@@ -10,12 +10,16 @@ import {
   addAssetsToContent,
   addPromptToChat,
   appendContentById,
+  appendMainTextById,
+  addDetailBlockToContent,
 } from '@/redux/conversations/conversationsSlice';
 import { store } from '@/redux/store';
-import { ChatContent, ChatFile } from '@/typings/common';
+import { ChatContent, ChatFile, AssistantDetailBlock } from '@/typings/common';
 
 const IO_EDITOR_PENDING_KEY = 'io_editor_pending_file';
 const IO_EDITOR_RETURN_KEY = 'io_editor_return_path';
+const TOOL_EVENT_START_MARKER = '<<<AMS_TOOL_EVENT_V1>>>';
+const TOOL_EVENT_END_MARKER = '<<<AMS_TOOL_EVENT_END>>>';
 
 const NARRATIVE_DELTA_REGEX =
   /^(Thought:|Observation:|Action:|Final Answer:|\*\*Generated Files:\*\*|\[Download\s|Config loaded successfully\.|The JSON structure seems|Validation passed\.|Schematic generation result:|Layout generation result:)/;
@@ -75,6 +79,78 @@ const stripKnownThoughtPrefix = (text: string): string =>
 const stripKnownExecutionPrefix = (text: string): string =>
   text.replace(/^\s*(Execution logs?:|\*\*Execution logs?:\*\*)\s*/i, '');
 
+interface StructuredToolEventPayload {
+  marker?: string;
+  tool?: string;
+  event_type?: string;
+  status?: string;
+  summary?: string;
+  extra?: Record<string, unknown>;
+}
+
+const getPayloadRawOutput = (payload: StructuredToolEventPayload): string => {
+  const hideRawOutputInMain = payload.extra?.hide_raw_output_in_main === true;
+  if (hideRawOutputInMain) {
+    return '';
+  }
+
+  const maybeRawOutput = payload.extra?.raw_output;
+  if (typeof maybeRawOutput !== 'string') {
+    return '';
+  }
+  return maybeRawOutput.trim();
+};
+
+const getPayloadMainInfoLines = (
+  payload: StructuredToolEventPayload,
+): string[] => {
+  const maybeLines = payload.extra?.main_info_lines;
+  if (!Array.isArray(maybeLines)) {
+    return [];
+  }
+
+  return maybeLines
+    .filter(item => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean);
+};
+
+const parseStructuredToolEvent = (
+  rawText: string,
+): {
+  cleanedText: string;
+  payload: StructuredToolEventPayload | null;
+} => {
+  if (!rawText) {
+    return { cleanedText: '', payload: null };
+  }
+
+  const startIndex = rawText.indexOf(TOOL_EVENT_START_MARKER);
+  const endIndex = rawText.indexOf(TOOL_EVENT_END_MARKER);
+
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+    return { cleanedText: rawText, payload: null };
+  }
+
+  const jsonStart = startIndex + TOOL_EVENT_START_MARKER.length;
+  const jsonRaw = rawText.slice(jsonStart, endIndex).trim();
+
+  const cleanedText = (
+    rawText.slice(0, startIndex) +
+    rawText.slice(endIndex + TOOL_EVENT_END_MARKER.length)
+  ).trim();
+
+  try {
+    const payload = JSON.parse(jsonRaw) as StructuredToolEventPayload;
+    if (payload && payload.marker === 'AMS_TOOL_EVENT_V1') {
+      return { cleanedText, payload };
+    }
+    return { cleanedText, payload: null };
+  } catch {
+    return { cleanedText, payload: null };
+  }
+};
+
 let abortController: AbortController | null = null;
 let isGenerating = false;
 let streamRunId = 0;
@@ -118,7 +194,7 @@ export const startAgentStream = async ({
 
   abortController = new AbortController();
   const signal = abortController.signal;
-
+  let assistantContentId = '';
   try {
     const response = await submitPrompt({
       prompt,
@@ -152,9 +228,80 @@ export const startAgentStream = async ({
     const reader = response?.body?.getReader();
     const decoder = new TextDecoder('utf-8');
 
-    let assistantContentId = '';
     let assistantTextBuffer = '';
     let pendingNewAssistantBlock = false;
+    let stepCounter = 1;
+    let lastMainStepKey = '';
+    let mainTitleAdded = false;
+
+    const appendDetailBlock = (detail: Omit<AssistantDetailBlock, 'id'>) => {
+      store.dispatch(
+        addDetailBlockToContent({
+          chatId,
+          contentId: assistantContentId,
+          detail: {
+            ...detail,
+            id: uuidv4(),
+          },
+        }),
+      );
+    };
+
+    const appendMainToolEvent = (payload: StructuredToolEventPayload) => {
+      const toolLabel = payload.tool || 'Tool';
+      const status = payload.status || 'completed';
+      const summary = payload.summary || 'Step completed.';
+      const eventType = payload.event_type || 'tool_result';
+      const rawOutput = getPayloadRawOutput(payload);
+      const mainInfoLines = getPayloadMainInfoLines(payload);
+
+      const dedupeKey = `${toolLabel}:${status}:${eventType}:${summary}:${rawOutput}:${mainInfoLines.join(
+        '|',
+      )}`;
+      if (dedupeKey === lastMainStepKey) {
+        return;
+      }
+      lastMainStepKey = dedupeKey;
+
+      const statusIcon = status === 'failed' ? '❌' : '✅';
+      const statusText = status === 'failed' ? 'Failed' : 'Completed';
+
+      let section = '';
+      if (!mainTitleAdded) {
+        section += '\n## Agent Workflow Highlights\n';
+        mainTitleAdded = true;
+      }
+
+      section += `\n### ${statusIcon} Step ${stepCounter} · ${toolLabel}\n`;
+      section += `> **Status:** ${statusText}\n`;
+      if (rawOutput) {
+        section += '> **Output:**\n';
+        section += '> ```text\n';
+        for (const line of rawOutput.split(/\r?\n/)) {
+          section += `> ${line}\n`;
+        }
+        section += '> ```\n';
+      } else if (mainInfoLines.length > 0) {
+        section += '> **Output:**\n';
+        section += '> ```text\n';
+        for (const line of mainInfoLines) {
+          section += `> ${line}\n`;
+        }
+        section += '> ```\n';
+      } else {
+        section += `> **Type:** ${eventType}\n`;
+        section += `> **Summary:** ${summary}\n`;
+      }
+      stepCounter += 1;
+
+      store.dispatch(
+        appendMainTextById({
+          chatId,
+          contentId: assistantContentId,
+          textDelta: section,
+        }),
+      );
+    };
 
     if (!isRegenerate) {
       assistantContentId = uuidv4();
@@ -163,6 +310,9 @@ export const startAgentStream = async ({
         text: '',
         id: assistantContentId,
         steps: [],
+        messageVersion: 2,
+        mainText: '',
+        details: [],
       };
       store.dispatch(addPromptToChat({ chatId, content: newPrompt }));
     } else {
@@ -173,6 +323,9 @@ export const startAgentStream = async ({
           text: '',
           id: assistantContentId,
           steps: [],
+          messageVersion: 2,
+          mainText: '',
+          details: [],
         };
         store.dispatch(addPromptToChat({ chatId, content: newPrompt }));
       }
@@ -222,6 +375,9 @@ export const startAgentStream = async ({
               text: '',
               id: assistantContentId,
               steps: [],
+              messageVersion: 2,
+              mainText: '',
+              details: [],
             };
 
             store.dispatch(
@@ -257,7 +413,19 @@ export const startAgentStream = async ({
                 textDelta: promptDelta,
               }),
             );
+            store.dispatch(
+              appendMainTextById({
+                chatId,
+                contentId: assistantContentId,
+                textDelta: promptDelta,
+              }),
+            );
             assistantTextBuffer += promptDelta;
+            appendDetailBlock({
+              type: 'input_request',
+              content: String(content.prompt || ''),
+              timestamp: Date.now(),
+            });
 
             const newHumanPrompt: ChatContent = {
               type: 'Human',
@@ -310,6 +478,11 @@ export const startAgentStream = async ({
                   textDelta: safeThoughtDelta,
                 }),
               );
+              appendDetailBlock({
+                type: 'agent_thought',
+                content: thoughtText,
+                timestamp: Date.now(),
+              });
               assistantTextBuffer += safeThoughtDelta;
             }
             continue;
@@ -318,6 +491,13 @@ export const startAgentStream = async ({
           if (type === 'files_generated') {
             const files = content;
             if (files && Array.isArray(files) && files.length > 0) {
+              appendDetailBlock({
+                type: 'files_generated',
+                content: '',
+                files,
+                timestamp: Date.now(),
+              });
+
               const pendingEditorFile = files.find(
                 file =>
                   typeof file?.name === 'string' &&
@@ -441,10 +621,16 @@ export const startAgentStream = async ({
               typeof content === 'string'
                 ? content
                 : JSON.stringify(content, null, 2);
+            const { cleanedText, payload } =
+              parseStructuredToolEvent(resultText);
 
-            const trimmedResult = resultText
-              ? stripKnownExecutionPrefix(resultText.trim())
+            const trimmedResult = cleanedText
+              ? stripKnownExecutionPrefix(cleanedText.trim())
               : '';
+
+            if (payload) {
+              appendMainToolEvent(payload);
+            }
 
             if (trimmedResult) {
               const resultDelta =
@@ -464,6 +650,11 @@ export const startAgentStream = async ({
                   textDelta: safeResultDelta,
                 }),
               );
+              appendDetailBlock({
+                type: 'tool_result',
+                content: trimmedResult,
+                timestamp: Date.now(),
+              });
               assistantTextBuffer += safeResultDelta;
             }
             continue;
@@ -481,6 +672,11 @@ export const startAgentStream = async ({
                 textDelta: errorDelta,
               }),
             );
+            appendDetailBlock({
+              type: 'agent_error',
+              content: String(content),
+              timestamp: Date.now(),
+            });
             assistantTextBuffer += errorDelta;
             continue;
           }
@@ -497,6 +693,11 @@ export const startAgentStream = async ({
                 textDelta: statusDelta,
               }),
             );
+            appendDetailBlock({
+              type: 'status',
+              content: String(content),
+              timestamp: Date.now(),
+            });
             assistantTextBuffer += statusDelta;
           }
         } catch (error) {

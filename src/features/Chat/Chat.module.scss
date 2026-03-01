@@ -31,7 +31,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-bottom: 20px;
+  box-sizing: border-box;
+  padding-bottom: 16px;
+  scrollbar-gutter: stable both-edges;
 }
 
 .chatGeneralContainerNew {
@@ -77,6 +79,8 @@
   width: 100%;
   height: 100%;
   margin-top: -60px;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .titleAiContainer {
@@ -207,4 +211,205 @@
 .iconClose {
   align-self: center;
   margin-right: 8px;
+}
+
+.chatFooter {
+  width: 100%;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  position: relative;
+  z-index: 2;
+}
+
+.chatFooterTop {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.waitingPrompt {
+  font-style: normal;
+  color: var(--text-primary);
+  font-size: 14px;
+  max-width: min(68%, 760px);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.attachmentPillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.attachmentPill {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  padding: 4px 6px 4px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  max-width: min(420px, 100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachmentPillLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-primary);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--primary-color);
+  }
+
+  svg {
+    flex-shrink: 0;
+    stroke: currentcolor;
+  }
+}
+
+.attachmentPillName {
+  display: inline-block;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attachmentPillActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.attachmentPillActionBtn {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease;
+
+  &:hover {
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+  }
+
+  svg {
+    stroke: currentcolor;
+  }
+}
+
+.composerBar {
+  width: 100%;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: var(--bg-primary);
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.composerRow {
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.composerInput {
+  width: 100%;
+  resize: none;
+  min-height: 46px;
+  max-height: 180px;
+  overflow-y: hidden;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-family-main);
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.composerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.inlineFilesButton {
+  height: 36px;
+  padding: 0 10px;
+  white-space: nowrap;
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+
+.sideFilesButton {
+  @extend .inlineFilesButton;
+  flex-shrink: 0;
+  width: 40px !important;
+  min-width: 40px !important;
+  padding: 0 !important;
+  align-self: stretch;
+  height: auto !important;
+  border-radius: 12px !important;
+
+  span {
+    display: none;
+  }
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.composerIconButton {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-primary);
+  transition: border-color 0.2s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--border-primary);
+  }
+
+  &:disabled {
+    cursor: default;
+    color: var(--text-disabled);
+  }
+
+  svg {
+    stroke: currentcolor;
+  }
 }

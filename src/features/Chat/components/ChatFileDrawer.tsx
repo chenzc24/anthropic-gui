@@ -67,9 +67,35 @@ export const ChatFileDrawer: React.FC<ChatFileDrawerProps> = ({
     }
   };
 
+  const resolvePreviewUrl = (rawUrl?: string) => {
+    if (!rawUrl) return null;
+
+    const normalized = rawUrl.trim();
+    if (!normalized) return null;
+
+    if (/^https?:\/\//i.test(normalized)) {
+      return normalized;
+    }
+
+    if (normalized.startsWith('/')) {
+      return normalized;
+    }
+
+    if (normalized.startsWith('./')) {
+      return `/${normalized.slice(2)}`;
+    }
+
+    if (normalized.startsWith('output/') || normalized.startsWith('uploads/')) {
+      return `/${normalized}`;
+    }
+
+    return `/${normalized}`;
+  };
+
   const handleDownload = (url: string, name: string) => {
+    const downloadUrl = resolvePreviewUrl(url) || url;
     const link = document.createElement('a');
-    link.href = url;
+    link.href = downloadUrl;
     link.download = name;
     document.body.appendChild(link);
     link.click();
@@ -90,29 +116,42 @@ export const ChatFileDrawer: React.FC<ChatFileDrawerProps> = ({
   const [previewContent, setPreviewContent] = useState<string>('');
 
   useEffect(() => {
-    if (
-      previewFile &&
-      (previewFile.type === 'code' ||
-        previewFile.type === 'json' ||
-        previewFile.type === 'config' ||
-        previewFile.type === 'il' ||
-        previewFile.type === 'unknown')
-    ) {
-      setPreviewContent('Loading...');
-      if (previewFile.url && previewFile.url.startsWith('http')) {
-        fetch(previewFile.url)
-          .then(res => res.text())
-          .then(text => setPreviewContent(text))
-          .catch(err =>
-            setPreviewContent(`Error loading file: ${err.message}`),
-          );
-      } else {
-        // If it's a local path or not fetchable directly, we might need a backend proxy or just show the path
-        setPreviewContent(
-          `Cannot preview this file directly in browser.\nPath: ${previewFile.url}`,
-        );
-      }
+    if (!previewFile) {
+      setPreviewContent('');
+      return;
     }
+
+    const supportsTextPreviewByName = /\.(il|json)$/i.test(previewFile.name);
+    const supportsTextPreviewByType =
+      previewFile.type === 'code' ||
+      previewFile.type === 'json' ||
+      previewFile.type === 'config' ||
+      previewFile.type === 'il' ||
+      previewFile.type === 'unknown';
+
+    if (!supportsTextPreviewByType && !supportsTextPreviewByName) {
+      setPreviewContent('');
+      return;
+    }
+
+    const previewUrl = resolvePreviewUrl(previewFile.url);
+    if (!previewUrl) {
+      setPreviewContent(
+        `Cannot preview this file directly in browser.\nPath: ${previewFile.url}`,
+      );
+      return;
+    }
+
+    setPreviewContent('Loading...');
+    fetch(previewUrl)
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`Request failed: ${res.status} ${res.statusText}`);
+        }
+        return res.text();
+      })
+      .then(text => setPreviewContent(text))
+      .catch(err => setPreviewContent(`Error loading file: ${err.message}`));
   }, [previewFile]);
 
   return (
@@ -224,7 +263,7 @@ export const ChatFileDrawer: React.FC<ChatFileDrawerProps> = ({
         <DialogContent dividers>
           {previewFile?.type === 'image' ? (
             <img
-              src={previewFile.url}
+              src={resolvePreviewUrl(previewFile.url) || previewFile.url}
               alt={previewFile.name}
               style={{
                 maxWidth: '100%',
@@ -238,13 +277,16 @@ export const ChatFileDrawer: React.FC<ChatFileDrawerProps> = ({
               style={{
                 margin: 0,
                 padding: 16,
-                backgroundColor: '#f5f5f5',
+                backgroundColor: 'var(--bg-secondary)',
+                color: 'var(--text-primary)',
                 borderRadius: 4,
                 overflow: 'auto',
                 maxHeight: '60vh',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
               }}
             >
-              <code>{previewContent}</code>
+              <code style={{ color: 'inherit' }}>{previewContent}</code>
             </pre>
           )}
         </DialogContent>

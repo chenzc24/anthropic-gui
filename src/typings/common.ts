@@ -35,6 +35,31 @@ export interface AgentStep {
   files?: Array<{ name: string; path: string; url: string }>;
 }
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  path: string;
+  url: string;
+  mimeType?: string;
+  category?: 'image' | 'text' | 'code' | 'csv' | 'json' | 'other';
+  size?: number;
+  timestamp: number;
+}
+
+export interface AssistantDetailBlock {
+  id: string;
+  type:
+    | 'agent_thought'
+    | 'tool_result'
+    | 'status'
+    | 'files_generated'
+    | 'agent_error'
+    | 'input_request';
+  content: string;
+  files?: Array<{ name: string; path: string; url: string }>;
+  timestamp: number;
+}
+
 export interface ChatFile {
   id: string; // Unique ID
   name: string; // File name (e.g. layout.json)
@@ -49,6 +74,10 @@ export interface ChatContent {
   text: string;
   steps?: AgentStep[];
   assets?: ChatFile[]; // Structured generated files
+  messageVersion?: 1 | 2;
+  mainText?: string;
+  details?: AssistantDetailBlock[];
+  humanAttachments?: ChatAttachment[];
 }
 
 export interface TreeItem {

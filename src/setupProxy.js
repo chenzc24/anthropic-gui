@@ -27,4 +27,13 @@ module.exports = function(app) {
       changeOrigin: true,
     })
   );
+
+  // Proxy uploaded files for preview/download
+  app.use(
+    '/uploads',
+    createProxyMiddleware({
+      target: 'http://127.0.0.1:8000',
+      changeOrigin: true,
+    })
+  );
 };

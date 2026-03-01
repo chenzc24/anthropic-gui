@@ -1,6 +1,5 @@
 import { memo } from 'react';
 
-import { Stack } from '@mui/material';
 import classNames from 'classnames';
 import { Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -9,8 +8,6 @@ import { ROUTES } from '@/app/router/constants/routes';
 import { Logo } from '@/components/Logo';
 import { Logout } from '@/components/Logout';
 import { Conversations } from '@/features/Conversations';
-import { saveFolder } from '@/redux/conversations/conversationsSlice';
-import { useAppDispatch } from '@/redux/hooks';
 import { ButtonComponent } from '@/ui/ButtonComponent';
 import { IconComponent } from '@/ui/IconComponent';
 
@@ -23,14 +20,6 @@ interface SidebarProps {
 
 export const Sidebar = memo(({ className, onOpenSettings }: SidebarProps) => {
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
-
-  const onClickNewChat = () => {
-    navigate(ROUTES.Home);
-  };
-  const onClickNewFolder = () => {
-    dispatch(saveFolder({ name: 'New Folder' }));
-  };
 
   const onClickEditor = () => {
     navigate(ROUTES.Editor);
@@ -39,32 +28,6 @@ export const Sidebar = memo(({ className, onOpenSettings }: SidebarProps) => {
   return (
     <div className={classNames(className, styles.wrapper)}>
       <Logo />
-      <Stack direction="row" spacing={1} sx={{ width: '100%' }}>
-        <ButtonComponent
-          onClick={onClickNewChat}
-          style={{ flex: 1, padding: '12px 0', fontSize: '0.8rem' }}
-        >
-          <span>New Chat</span>
-          <IconComponent
-            type="plus"
-            className={styles.newChatIcon}
-            style={{ width: 16, height: 16 }}
-          />
-        </ButtonComponent>
-
-        <ButtonComponent
-          onClick={onClickNewFolder}
-          style={{ flex: 1, padding: '12px 0', fontSize: '0.8rem' }}
-        >
-          <span>New Folder</span>
-          <IconComponent
-            type="newFolder"
-            className={styles.newChatIcon}
-            style={{ width: 16, height: 16 }}
-          />
-        </ButtonComponent>
-      </Stack>
-
       <ButtonComponent onClick={onClickEditor} style={{ marginTop: 2 }}>
         <span>IO Editor</span>
         <IconComponent type="edit" className={styles.newChatIcon} />

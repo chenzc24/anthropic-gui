@@ -1,16 +1,18 @@
 import { ChangeEvent, memo, useState } from 'react';
 
-import { InputAdornment } from '@mui/material';
+import { InputAdornment, Menu, MenuItem } from '@mui/material';
 import OutsideClickHandler from 'react-outside-click-handler';
-import { useDispatch } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 
+import { ROUTES } from '@/app/router/constants/routes';
 import { ChatsTree } from '@/features/Conversations/ChatsTree';
 import { useDebounce } from '@/hooks/useDebounce';
 import { selectCountConversations } from '@/redux/conversations/conversations.selectors';
 import {
   clearConversations,
+  saveFolder,
 } from '@/redux/conversations/conversationsSlice';
-import { useAppSelector } from '@/redux/hooks';
+import { useAppDispatch, useAppSelector } from '@/redux/hooks';
 import { ButtonComponent } from '@/ui/ButtonComponent';
 import { IconComponent } from '@/ui/IconComponent';
 import { TextFieldComponent } from '@/ui/TextFieldComponent';
@@ -21,10 +23,13 @@ import styles from './Conversations.module.scss';
 
 export const Conversations = memo(() => {
   const [isClearing, setIsClearing] = useState(false);
-  const dispatch = useDispatch();
+  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const [searchedName, setSearchedName] = useState('');
   const debouncedSearch = useDebounce(searchedName, 500);
   const conversationLength = useAppSelector(selectCountConversations);
+  const isAddMenuOpen = Boolean(menuAnchorEl);
 
   const onSearchChange = (event: ChangeEvent<HTMLInputElement>) => {
     setSearchedName(event.target.value);
@@ -43,8 +48,26 @@ export const Conversations = memo(() => {
   };
 
   const onClearConfirm = () => {
-    dispatch(dispatch(clearConversations()));
+    dispatch(clearConversations());
     setIsClearing(false);
+  };
+
+  const onOpenAddMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setMenuAnchorEl(event.currentTarget);
+  };
+
+  const onCloseAddMenu = () => {
+    setMenuAnchorEl(null);
+  };
+
+  const onAddChat = () => {
+    navigate(ROUTES.Home);
+    onCloseAddMenu();
+  };
+
+  const onAddFolder = () => {
+    dispatch(saveFolder({ name: 'New Folder' }));
+    onCloseAddMenu();
   };
 
   const onOutsideClick = () => {
@@ -82,18 +105,39 @@ export const Conversations = memo(() => {
       />
       <div className={styles.header}>
         <p>{`Conversations (${conversationLength})`}</p>
-        <OutsideClickHandler onOutsideClick={onOutsideClick}>
-          {isClearing ? (
-            <div className={styles.confirmationClear}>
-              <IconComponent type="confirm" onClick={onClearConfirm} />
-              <IconComponent type="cancel" onClick={onClickCancel} />
-            </div>
-          ) : (
-            <ButtonComponent onClick={onClickClear} variant="text">
-              Clear
-            </ButtonComponent>
-          )}
-        </OutsideClickHandler>
+        <div className={styles.headerActions}>
+          <button
+            className={styles.addButton}
+            onClick={onOpenAddMenu}
+            title="Add"
+            type="button"
+          >
+            <IconComponent type="plus" className={styles.addIcon} />
+          </button>
+          <OutsideClickHandler onOutsideClick={onOutsideClick}>
+            {isClearing ? (
+              <div className={styles.confirmationClear}>
+                <IconComponent type="confirm" onClick={onClearConfirm} />
+                <IconComponent type="cancel" onClick={onClickCancel} />
+              </div>
+            ) : (
+              <ButtonComponent onClick={onClickClear} variant="text">
+                Clear
+              </ButtonComponent>
+            )}
+          </OutsideClickHandler>
+        </div>
+
+        <Menu
+          anchorEl={menuAnchorEl}
+          open={isAddMenuOpen}
+          onClose={onCloseAddMenu}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <MenuItem onClick={onAddChat}>Add Chat</MenuItem>
+          <MenuItem onClick={onAddFolder}>Add Folder</MenuItem>
+        </Menu>
       </div>
 
       {debouncedSearch ? (

@@ -7,6 +7,8 @@ import {
   ChatContent,
   AgentStep,
   ChatFile,
+  AssistantDetailBlock,
+  ChatAttachment,
 } from '@/typings/common';
 
 import { findChatById } from './conversations.selectors';
@@ -160,6 +162,72 @@ export const conversationsSlice = createSlice({
         content.text += textDelta;
       }
     },
+    setMessageVersionById: (
+      state,
+      action: PayloadAction<{
+        chatId: string;
+        contentId: string;
+        messageVersion: 1 | 2;
+      }>,
+    ) => {
+      const { chatId, contentId, messageVersion } = action.payload;
+      const chat = findChatById(state.conversations, chatId);
+      const content = chat?.content?.find(c => c.id === contentId);
+      if (content) {
+        content.messageVersion = messageVersion;
+      }
+    },
+    appendMainTextById: (
+      state,
+      action: PayloadAction<{
+        chatId: string;
+        contentId: string;
+        textDelta: string;
+      }>,
+    ) => {
+      const { chatId, contentId, textDelta } = action.payload;
+      const chat = findChatById(state.conversations, chatId);
+      const content = chat?.content?.find(c => c.id === contentId);
+      if (content) {
+        content.mainText = (content.mainText || '') + textDelta;
+      }
+    },
+    addDetailBlockToContent: (
+      state,
+      action: PayloadAction<{
+        chatId: string;
+        contentId: string;
+        detail: AssistantDetailBlock;
+      }>,
+    ) => {
+      const { chatId, contentId, detail } = action.payload;
+      const chat = findChatById(state.conversations, chatId);
+      const content = chat?.content?.find(c => c.id === contentId);
+      if (content) {
+        if (!content.details) {
+          content.details = [];
+        }
+        content.details.push(detail);
+      }
+    },
+    addHumanAttachmentsToContent: (
+      state,
+      action: PayloadAction<{
+        chatId: string;
+        contentId: string;
+        attachments: ChatAttachment[];
+      }>,
+    ) => {
+      const { chatId, contentId, attachments } = action.payload;
+      const chat = findChatById(state.conversations, chatId);
+      const content = chat?.content?.find(c => c.id === contentId);
+      if (content) {
+        if (!content.humanAttachments) {
+          content.humanAttachments = [];
+        }
+        content.humanAttachments.push(...attachments);
+      }
+    },
     addStepToContent: (
       state,
       action: PayloadAction<{
@@ -246,6 +314,10 @@ export const {
   addPromptToChat,
   updateContentById,
   appendContentById,
+  setMessageVersionById,
+  appendMainTextById,
+  addDetailBlockToContent,
+  addHumanAttachmentsToContent,
   addStepToContent,
   addAssetsToContent,
   renameChatTreeItem,

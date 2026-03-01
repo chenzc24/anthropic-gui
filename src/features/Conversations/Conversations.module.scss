@@ -88,6 +88,35 @@
   border-bottom: 1px solid var(--border-primary);
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.addButton {
+  border: 1px solid transparent;
+  background: transparent;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+
+  &:hover {
+    border-color: var(--border-primary);
+  }
+}
+
+.addIcon {
+  width: 16px;
+  height: 16px;
+  stroke: var(--text-secondary);
+}
+
 .treeContainer {
   height: 70vh;
   row-gap: '0px';
