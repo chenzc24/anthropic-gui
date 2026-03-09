@@ -104,16 +104,30 @@ const closeOpenFences = (text: string): string => {
   return `${text}\n${closingFence}\n`;
 };
 
+const trimTrailingEmptyFenceBlocks = (text: string): string => {
+  let normalized = text;
+
+  const emptyFenceBlockRegex =
+    /(?:\n|^)(`{3,}|~{3,})[^\n]*\n[ \t\r]*\n?[ \t\r]*\1[ \t\r]*(?=\n*$)/;
+
+  while (emptyFenceBlockRegex.test(normalized)) {
+    normalized = normalized.replace(emptyFenceBlockRegex, '\n');
+  }
+
+  return normalized.trimEnd();
+};
+
 const buildSlateValueFromMarkdown = (rawContent: string): Descendant[] => {
   if (!rawContent) return EMPTY_VALUE;
 
   const normalized = closeOpenFences(
     recoverFencesWithNarrativeMarkers(normalizeCodeTags(rawContent)),
   );
+  const sanitized = trimTrailingEmptyFenceBlocks(normalized);
 
   try {
     const processor = unified().use(markdown).use(remarkToSlate);
-    const result = processor.processSync(normalized).result;
+    const result = processor.processSync(sanitized).result;
     const transformedResult = transformResultParse(result).flat();
 
     if (Array.isArray(transformedResult) && transformedResult.length > 0) {

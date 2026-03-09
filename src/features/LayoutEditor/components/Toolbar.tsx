@@ -32,11 +32,16 @@ export const Toolbar: React.FC = () => {
     selectedIds,
     deleteInstances,
     editorSourcePath,
+    editorProcessNode,
     setEditorSourcePath,
+    setEditorProcessNode,
   } = useIORingStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isConfirming, setIsConfirming] = useState(false);
+  const isT28 = String(graph?.ring_config?.process_node || '')
+    .toUpperCase()
+    .includes('28');
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -83,11 +88,27 @@ export const Toolbar: React.FC = () => {
     try {
       setIsConfirming(true);
       const externalGraph = exportAdapter(graph);
-      await submitEditorConfirm(sourcePath, externalGraph);
+      const resolvedProcessNode =
+        (typeof graph?.ring_config?.process_node === 'string' &&
+          graph.ring_config.process_node) ||
+        editorProcessNode;
+
+      const confirmPayload = {
+        ...externalGraph,
+        ring_config: {
+          ...(externalGraph?.ring_config || {}),
+          ...(resolvedProcessNode
+            ? { process_node: String(resolvedProcessNode).toUpperCase() }
+            : {}),
+        },
+      };
+
+      await submitEditorConfirm(sourcePath, confirmPayload);
       alert(
         'Editor changes submitted. Backend layout generation should continue now.',
       );
       setEditorSourcePath(null);
+      setEditorProcessNode(null);
     } catch (err) {
       void err;
       alert('Failed to submit editor confirmation. Please retry.');
@@ -106,6 +127,14 @@ export const Toolbar: React.FC = () => {
   };
   const canUndo = history.past.length > 0;
   const canRedo = history.future.length > 0;
+
+  const addFromMenu = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    type?: string,
+  ) => {
+    addInstance('top', type);
+    e.currentTarget.closest('details')?.removeAttribute('open');
+  };
 
   return (
     <div className="h-14 border-b bg-gray-50 flex items-center px-4 justify-between select-none">
@@ -186,41 +215,39 @@ export const Toolbar: React.FC = () => {
             {/* The dropdown content */}
             <div className="absolute top-full mt-1 left-0 bg-white border border-gray-200 shadow-lg rounded p-1 flex flex-col w-40 z-50">
               <button
-                onClick={e => {
-                  addInstance('top');
-                  e.currentTarget.closest('details')?.removeAttribute('open');
-                }}
+                onClick={e => addFromMenu(e)}
                 className="text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded w-full"
               >
                 IO Pad
               </button>
               <button
-                onClick={e => {
-                  addInstance('top', 'filler');
-                  e.currentTarget.closest('details')?.removeAttribute('open');
-                }}
+                onClick={e => addFromMenu(e, 'filler')}
                 className="text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded w-full"
               >
                 Filler
               </button>
               <button
-                onClick={e => {
-                  addInstance('top', 'blank');
-                  e.currentTarget.closest('details')?.removeAttribute('open');
-                }}
-                className="text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded w-full"
-              >
-                Blank
-              </button>
-              <button
-                onClick={e => {
-                  addInstance('top', 'corner');
-                  e.currentTarget.closest('details')?.removeAttribute('open');
-                }}
+                onClick={e => addFromMenu(e, 'corner')}
                 className="text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded w-full"
               >
                 Corner
               </button>
+              {isT28 && (
+                <button
+                  onClick={e => addFromMenu(e, 'cut')}
+                  className="text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded w-full"
+                >
+                  CUT
+                </button>
+              )}
+              {!isT28 && (
+                <button
+                  onClick={e => addFromMenu(e, 'blank')}
+                  className="text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded w-full"
+                >
+                  Blank
+                </button>
+              )}
             </div>
           </details>
 

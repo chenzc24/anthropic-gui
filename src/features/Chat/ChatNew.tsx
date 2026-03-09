@@ -20,8 +20,7 @@ import { uploadFile } from '@/api/files.api';
 import { NavigationContext } from '@/app/App';
 import { ROUTES } from '@/app/router/constants/routes';
 import { saveChat } from '@/redux/conversations/conversationsSlice';
-import { useAppDispatch, useAppSelector } from '@/redux/hooks';
-import { selectThemeMode } from '@/redux/theme/theme.selectors';
+import { useAppDispatch } from '@/redux/hooks';
 import { ChatAttachment } from '@/typings/common';
 import { ButtonComponent } from '@/ui/ButtonComponent';
 import { IconComponent } from '@/ui/IconComponent';
@@ -85,7 +84,6 @@ export const ChatNew: React.FC = () => {
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const { setDidNewChatNavigate } = useContext(NavigationContext);
-  const theme = useAppSelector(selectThemeMode);
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
 
@@ -249,29 +247,6 @@ export const ChatNew: React.FC = () => {
           styles.chatGeneralContainerNew,
         )}
       >
-        <div className={styles.chatBgContainer}>
-          <div className={styles.titleAiContainer}>
-            {theme === 'dark' ? (
-              <IconComponent
-                type="backgroundChatDark"
-                className={styles.bgImg}
-              />
-            ) : (
-              <IconComponent
-                type="backgroundChatLight"
-                className={styles.bgImg}
-              />
-            )}
-          </div>
-          <div className={styles.titleAiContainer}>
-            {theme === 'dark' ? (
-              <IconComponent type="logoDark" className={styles.iconTitle} />
-            ) : (
-              <IconComponent type="logoLight" className={styles.iconTitle} />
-            )}
-          </div>
-        </div>
-
         <div className={styles.chatFooter}>
           {!!composerAttachments.length && (
             <div className={styles.attachmentPillRow}>
@@ -377,11 +352,7 @@ export const ChatNew: React.FC = () => {
 
       <ToastContainer
         hideProgressBar
-        toastStyle={
-          theme === 'dark'
-            ? { background: '#363C4A' }
-            : { background: '#000000' }
-        }
+        toastStyle={{ background: 'var(--bg-secondary)' }}
         style={{
           width: '100%',
           position: 'absolute',

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 
 import {
   buildPinConfigTemplate,
+  classifyDeviceForProcess,
+  getSupportedDevicesForProcess,
   supportedProcessNodes,
 } from '../utils/pinConfigTemplates';
 
@@ -51,6 +53,49 @@ const pinRowsToConfig = (rows: PinRow[]): Record<string, { label: string }> =>
     return acc;
   }, {} as Record<string, { label: string }>);
 
+const FIELD_DISPLAY_ORDER = [
+  'name',
+  'device',
+  'type',
+  'pin_connection',
+  'domain',
+  'direction',
+];
+
+const T28_CORNER_DEVICES = ['PCORNERA_G', 'PCORNER_G'];
+const T180_CORNER_DEVICES = ['PCORNER'];
+const T28_FILLER_DEVICES = [
+  'PFILLER10A_G',
+  'PFILLER20A_G',
+  'PFILLER10_G',
+  'PFILLER20_G',
+  'PRCUTA_G',
+];
+const T180_FILLER_DEVICES = ['PFILLER10', 'PFILLER20'];
+const T180_BLANK_DEVICES = ['BLANK'];
+
+const getSuggestedDevicesByType = (
+  processNode: string,
+  instanceType: string,
+): string[] => {
+  const normalizedType = String(instanceType || '').toLowerCase();
+  const isT28 = processNode === 'T28';
+
+  if (normalizedType === 'corner') {
+    return isT28 ? T28_CORNER_DEVICES : T180_CORNER_DEVICES;
+  }
+
+  if (normalizedType === 'filler') {
+    return isT28 ? T28_FILLER_DEVICES : T180_FILLER_DEVICES;
+  }
+
+  if (normalizedType === 'blank') {
+    return isT28 ? [] : T180_BLANK_DEVICES;
+  }
+
+  return getSupportedDevicesForProcess(processNode);
+};
+
 export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   data,
   onChange,
@@ -61,6 +106,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   // Independent state for text input to allow typing invalid/partial strings
   const [chipSizeInput, setChipSizeInput] = useState('');
   const [pinRows, setPinRows] = useState<PinRow[]>([]);
+  const [isDeviceMenuOpen, setIsDeviceMenuOpen] = useState(false);
 
   // Resolve chip size keys
   const widthKey =
@@ -114,11 +160,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     if (hasChipSize) {
       setChipSizeInput(`${data[widthKey]} * ${data[heightKey]}`);
     }
-    const pinConfigValue =
-      data?.meta?.pin_config !== undefined
-        ? data?.meta?.pin_config
-        : data?.pin_config;
-    setPinRows(parsePinConfigRows(pinConfigValue));
+    setPinRows(parsePinConfigRows(data?.pin_connection));
   }, [data, hasChipSize, widthKey, heightKey]);
 
   const handleChange = (key: string, value: any) => {
@@ -142,6 +184,12 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     }
   };
 
+  const processNode = String(
+    ringConfig?.process_node || localData?.process_node || 'T180',
+  ).toUpperCase();
+
+  const instanceType = String(localData?.type || '').toLowerCase();
+
   const renderInput = (
     key: string,
     value: any,
@@ -149,12 +197,26 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   ) => {
     const handleValChange = onValueChange || (val => handleChange(key, val));
 
-    if (key === 'pin_config') {
+    if (key === 'pin_connection') {
+      const syncPinFields = (
+        nextConfig?: Record<string, { label: string }>,
+      ) => {
+        const nextMeta = { ...(localData?.meta || {}) };
+        delete nextMeta.pin_connection;
+
+        const updated = {
+          ...localData,
+          pin_connection: nextConfig,
+          meta: nextMeta,
+        };
+
+        setLocalData(updated);
+        onChange(updated);
+      };
+
       const commitRows = (nextRows: PinRow[]) => {
         const asConfig = pinRowsToConfig(nextRows);
-        handleValChange(
-          Object.keys(asConfig).length > 0 ? asConfig : undefined,
-        );
+        syncPinFields(Object.keys(asConfig).length > 0 ? asConfig : undefined);
       };
 
       const updateRows = (
@@ -216,7 +278,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
         updateRows(pinRows.filter((_, i) => i !== index));
       };
 
-      const processNode = String(
+      const pinProcessNode = String(
         ringConfig?.process_node ||
           localData?.process_node ||
           localData?.meta?.process_node ||
@@ -225,11 +287,11 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
 
       const autoFill = () => {
         const generated = buildPinConfigTemplate({
-          processNode,
+          processNode: pinProcessNode,
           device: localData?.device,
           instanceName: localData?.name,
-          domain: localData?.domain ?? localData?.meta?.domain,
-          pinConfigProfiles: ringConfig?.pin_config_profiles,
+          domain: localData?.domain,
+          pinConfigProfiles: ringConfig?.pin_connection_profiles,
         });
         if (!generated) {
           return;
@@ -241,7 +303,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
             <div className="text-xs text-gray-500">
-              Process: <span className="font-semibold">{processNode}</span> (
+              Process: <span className="font-semibold">{pinProcessNode}</span> (
               {supportedProcessNodes().join(', ')})
             </div>
             <button
@@ -331,6 +393,44 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       );
     }
 
+    if (key === 'type') {
+      const currentType = String(value || '').toLowerCase();
+      const currentDevice = String(localData?.device || '').toUpperCase();
+      const isPadLikeType =
+        currentType === 'pad' || currentType === 'inner_pad';
+      const isFillerLikeType =
+        currentType === 'filler' ||
+        currentType === 'blank' ||
+        currentType === 'space' ||
+        currentType === 'cut';
+      const isCornerLikeType = currentType === 'corner';
+      const isLikelyPadDevice =
+        currentDevice !== 'BLANK' &&
+        !currentDevice.includes('CORNER') &&
+        !currentDevice.includes('FILLER') &&
+        !currentDevice.includes('RCUT');
+
+      const useT28PadTypeSelector =
+        processNode === 'T28' &&
+        (isPadLikeType ||
+          (!isFillerLikeType && !isCornerLikeType && isLikelyPadDevice));
+
+      if (useT28PadTypeSelector) {
+        const selectedType = currentType === 'inner_pad' ? 'inner_pad' : 'pad';
+
+        return (
+          <select
+            value={selectedType}
+            onChange={e => handleValChange(e.target.value)}
+            className="w-full px-2 py-1 text-sm border rounded focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="pad">pad</option>
+            <option value="inner_pad">inner_pad</option>
+          </select>
+        );
+      }
+    }
+
     if (key === 'domain') {
       return (
         <select
@@ -344,6 +444,90 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
           <option value="digital">digital</option>
           <option value="analog">analog</option>
         </select>
+      );
+    }
+
+    if (key === 'direction') {
+      const rawDirection = typeof value === 'string' ? value.toLowerCase() : '';
+      const normalizedDirection =
+        rawDirection === 'input' || rawDirection === 'output'
+          ? rawDirection
+          : '';
+
+      return (
+        <select
+          value={normalizedDirection}
+          onChange={e =>
+            handleValChange(e.target.value === '' ? undefined : e.target.value)
+          }
+          className="w-full px-2 py-1 text-sm border rounded focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">unset</option>
+          <option value="input">input</option>
+          <option value="output">output</option>
+        </select>
+      );
+    }
+
+    if (key === 'device') {
+      const deviceOptions = getSuggestedDevicesByType(
+        processNode,
+        instanceType,
+      );
+      const currentDevice = typeof value === 'string' ? value : '';
+      const normalizedInput = currentDevice.toLowerCase();
+      const filteredOptions = deviceOptions
+        .filter(option => option.toLowerCase().includes(normalizedInput))
+        .slice(0, 24);
+
+      return (
+        <div className="flex flex-col gap-1 relative">
+          <div className="relative">
+            <input
+              type="text"
+              value={currentDevice}
+              onFocus={() => setIsDeviceMenuOpen(true)}
+              onBlur={() => setTimeout(() => setIsDeviceMenuOpen(false), 100)}
+              onChange={e => {
+                handleValChange(e.target.value);
+                setIsDeviceMenuOpen(true);
+              }}
+              className="w-full px-2 py-1 pr-7 text-sm border rounded focus:ring-1 focus:ring-blue-500"
+              placeholder="Type or choose device"
+            />
+            <button
+              type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => setIsDeviceMenuOpen(open => !open)}
+              className="absolute right-1 top-1/2 -translate-y-1/2 text-xs text-gray-500 px-1"
+              aria-label="Toggle device suggestions"
+            >
+              v
+            </button>
+            {isDeviceMenuOpen && filteredOptions.length > 0 && (
+              <div className="absolute z-20 mt-1 w-full max-h-44 overflow-auto rounded border bg-white shadow">
+                {filteredOptions.map(option => (
+                  <button
+                    key={option}
+                    type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => {
+                      handleValChange(option);
+                      setIsDeviceMenuOpen(false);
+                    }}
+                    className="w-full text-left px-2 py-1 text-sm hover:bg-gray-100"
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="text-[10px] text-gray-400">
+            Suggested devices for {processNode}/{instanceType || 'pad'}:{' '}
+            {deviceOptions.length}
+          </div>
+        </div>
       );
     }
 
@@ -397,6 +581,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     'pad_width',
     'side',
     'order',
+    'pin_connection',
     '_relative_position',
     '_original_position',
   ];
@@ -407,16 +592,18 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   if (hasSideCounts) {
     hiddenKeys = [...hiddenKeys, ...sideCountKeys];
   }
-  const hiddenMainKeys = [...hiddenKeys, 'pin_config'];
+  const hiddenMainKeys = [...hiddenKeys];
 
   // Filter visible keys
   const keys = Object.keys(localData).filter(k => !hiddenMainKeys.includes(k));
 
-  const meta = localData.meta || {};
-  const metaKeys = Object.keys(meta).filter(k => !hiddenKeys.includes(k));
-
   const localType = String(localData?.type || '').toLowerCase();
   const localDevice = String(localData?.device || '').toUpperCase();
+  const isT28 = processNode === 'T28';
+  const deviceClass = classifyDeviceForProcess(processNode, localDevice);
+  const isDigitalDevice = deviceClass === 'digital';
+  const normalizedDomain = String(localData?.domain || '').toLowerCase();
+  const isAnalogDomain = normalizedDomain === 'analog';
   const isCornerInstance =
     localType === 'corner' ||
     localData?.side === 'corner' ||
@@ -428,36 +615,47 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     localDevice.includes('RCUT') ||
     localDevice === 'BLANK';
 
-  // Ensure 'domain' is visible for instances if missed
-  if (localData.device !== undefined && !metaKeys.includes('domain')) {
-    metaKeys.unshift('domain');
-  }
-  if (
+  const isPadBusinessInstance =
     localData.device !== undefined &&
     !isCornerInstance &&
-    !isFillerLikeInstance &&
-    !metaKeys.includes('pin_config')
-  ) {
-    metaKeys.unshift('pin_config');
+    !isFillerLikeInstance;
+  const allowDomainField = isPadBusinessInstance && !isT28;
+  const allowDirectionField =
+    isPadBusinessInstance &&
+    ((isT28 && isDigitalDevice) || (!isT28 && !isAnalogDomain));
+
+  if (!allowDomainField) {
+    const idx = keys.indexOf('domain');
+    if (idx >= 0) {
+      keys.splice(idx, 1);
+    }
+  }
+  if (!allowDirectionField) {
+    const idx = keys.indexOf('direction');
+    if (idx >= 0) {
+      keys.splice(idx, 1);
+    }
   }
 
-  const handleMetaChange = (metaKey: string, metaValue: any) => {
-    const newMeta = { ...meta, [metaKey]: metaValue };
-    handleChange('meta', newMeta);
-  };
+  // Ensure 'domain' is visible as a top-level business field.
+  if (allowDomainField && !keys.includes('domain')) {
+    keys.push('domain');
+  }
+  if (isPadBusinessInstance && !keys.includes('pin_connection')) {
+    keys.push('pin_connection');
+  }
+  if (allowDirectionField && !keys.includes('direction')) {
+    keys.push('direction');
+  }
 
-  const addMetaField = () => {
-    const key = prompt('Enter new meta field name:');
-    if (key && !meta[key]) {
-      handleMetaChange(key, 'value');
-    }
-  };
-
-  const deleteMetaField = (mKey: string) => {
-    const newMeta = { ...meta };
-    delete newMeta[mKey];
-    handleChange('meta', newMeta);
-  };
+  keys.sort((a, b) => {
+    const aIdx = FIELD_DISPLAY_ORDER.indexOf(a);
+    const bIdx = FIELD_DISPLAY_ORDER.indexOf(b);
+    if (aIdx >= 0 && bIdx >= 0) return aIdx - bIdx;
+    if (aIdx >= 0) return -1;
+    if (bIdx >= 0) return 1;
+    return 0;
+  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -542,33 +740,6 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
             {renderInput(key, localData[key])}
           </div>
         ))}
-
-        {/* Meta Fields - merged visually */}
-        {metaKeys.map(mKey => (
-          <div key={`meta-${mKey}`} className="flex flex-col gap-1">
-            <div className="flex justify-between items-center">
-              <label className="text-xs font-semibold text-gray-500 uppercase">
-                {mKey}
-              </label>
-              <button
-                onClick={() => deleteMetaField(mKey)}
-                className="text-xs text-red-400 hover:text-red-600"
-              >
-                x
-              </button>
-            </div>
-            {renderInput(mKey, meta[mKey], val => handleMetaChange(mKey, val))}
-          </div>
-        ))}
-      </div>
-
-      <div className="border-t pt-2">
-        <button
-          onClick={addMetaField}
-          className="text-xs text-blue-600 hover:text-blue-800"
-        >
-          + Add Property
-        </button>
       </div>
     </div>
   );

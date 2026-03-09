@@ -39,28 +39,77 @@ export const submitPrompt = async ({ prompt, signal }: PromptRequest) => {
 };
 
 export const submitInput = async (value: string) => {
+  const payload = {
+    value,
+    input: value,
+    text: value,
+  };
+
   const requestOptions = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ value }),
+    body: JSON.stringify(payload),
   };
 
-  try {
-    const response = await fetch(`/api/agent/submit_input`, requestOptions);
+  const endpointCandidates = [
+    '/api/agent/submit_input',
+    '/api/agent/input',
+    '/api/agent/chat/input',
+  ];
 
-    if (!response.ok) {
+  const sleep = (ms: number) =>
+    new Promise(resolve => {
+      setTimeout(resolve, ms);
+    });
+
+  let lastError = '';
+
+  for (const endpoint of endpointCandidates) {
+    let waitingRetry = 0;
+
+    while (waitingRetry < 5) {
+      const response = await fetch(endpoint, requestOptions);
+
+      if (response.ok) {
+        const responseText = await response.text();
+        try {
+          return responseText
+            ? JSON.parse(responseText)
+            : { status: 'success' };
+        } catch {
+          return { status: 'success', raw: responseText };
+        }
+      }
+
       const text = await response.text();
+      const normalized = (text || '').toLowerCase();
+
+      if (response.status === 404) {
+        lastError =
+          text || `Input submit failed at ${endpoint} with status 404`;
+        break;
+      }
+
+      if (
+        response.status === 400 &&
+        (normalized.includes('not waiting') ||
+          normalized.includes('waiting for input'))
+      ) {
+        waitingRetry += 1;
+        await sleep(200);
+        continue;
+      }
+
       throw new Error(
-        text || `Input submit failed with status ${response.status}`,
+        text ||
+          `Input submit failed at ${endpoint} with status ${response.status}`,
       );
     }
-
-    return await response.json();
-  } catch (error) {
-    throw error;
   }
+
+  throw new Error(lastError || 'Input submit failed on all known endpoints');
 };
 
 export const submitEditorConfirm = async (sourcePath: string, data: any) => {

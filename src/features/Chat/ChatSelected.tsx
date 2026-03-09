@@ -92,8 +92,6 @@ const buildLegacyAssistantText = (steps?: AgentStep[]): string => {
       );
     } else if (step.type === 'agent_error' && content) {
       segments.push(`**Error:**\n${content}`);
-    } else if (step.type === 'status' && content) {
-      segments.push(`> ${content}`);
     } else if (step.type === 'files_generated') {
       const files = parseFilesFromStep(step);
       if (files.length > 0) {

@@ -17,4 +17,36 @@
   .newChatIcon {
     stroke: #ffffff;
   }
+
+  .editorBtn {
+    margin-top: 2px;
+  }
+
+  .actionsRow {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .logoutWrap {
+    flex: 1;
+  }
+
+  .settingsBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 13px 11px;
+    background-color: var(--bg-primary);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--text-primary);
+    height: 100%;
+    transition: border-color 0.2s ease;
+
+    &:hover {
+      border-color: var(--border-primary);
+    }
+  }
 }

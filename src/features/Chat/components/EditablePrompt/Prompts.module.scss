@@ -64,7 +64,8 @@
   position: relative;
   flex: 1;
   min-width: 0;
-  width: auto;
+  width: 100%;
+  max-width: 100%;
   overflow: visible;
 }
 
@@ -173,7 +174,7 @@
   blockquote,
   ul,
   ol {
-    max-width: 88ch;
+    max-width: 100%;
   }
 
   & > :last-child {
@@ -187,6 +188,8 @@
   flex-direction: column;
   row-gap: 10px;
   width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
 }
 
 .promptMainRow {
@@ -197,12 +200,17 @@
 }
 
 .promptAvatarColumn {
-  width: 24px;
-  min-width: 24px;
+  width: 32px;
+  min-width: 32px;
   flex-shrink: 0;
   display: flex;
   justify-content: center;
   align-items: flex-start;
+
+  svg {
+    width: 28px;
+    height: 28px;
+  }
 }
 
 .promptAttachmentRow {
@@ -238,13 +246,93 @@
 }
 
 .attachmentBox {
-  margin-top: 12px;
   border: 1px solid var(--bg-btn-disabled);
   border-radius: 8px;
   padding: 10px;
   background: var(--bg-primary);
   position: relative;
   z-index: 3;
+}
+
+.humanCardSections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.humanCardHeaderSection,
+.humanCardBodySection,
+.humanCardFooterSection {
+  width: 100%;
+  min-width: 0;
+}
+
+.humanAttachmentsCollapse {
+  margin-top: 0;
+}
+
+.humanAttachmentsSummary {
+  cursor: pointer;
+  list-style: none;
+  padding: 10px;
+  border-top: 1px solid var(--bg-btn-disabled);
+  font-family: var(--font-family-bold);
+  font-size: 14px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+}
+
+.humanAttachmentsCount {
+  font-family: var(--font-family-main);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.humanAttachmentsBody {
+  padding: 0 10px 10px;
+}
+
+.humanReasoningCollapse {
+  border: 1px solid var(--bg-btn-disabled);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.humanReasoningSummary {
+  cursor: pointer;
+  list-style: none;
+  padding: 10px;
+  font-family: var(--font-family-bold);
+  font-size: 14px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+}
+
+.humanReasoningMeta {
+  font-family: var(--font-family-main);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.humanReasoningBody {
+  border-top: 1px solid var(--bg-btn-disabled);
+  padding: 10px;
+  max-height: min(70vh, 980px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .attachmentTitle {
@@ -385,14 +473,18 @@
 .assistantStructuredContainer {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
 }
 
 .assistantPrimaryBlock {
   border: 1px solid var(--bg-btn-disabled);
   border-radius: 8px;
-  padding: 10px;
   background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.assistantPrimaryContent {
+  padding: 10px;
 }
 
 .assistantPrimaryPlaceholder {
@@ -402,15 +494,14 @@
 }
 
 .assistantDetailsCollapse {
-  border: 1px solid var(--bg-btn-disabled);
-  border-radius: 8px;
-  background: var(--bg-primary);
+  margin-top: 0;
 }
 
 .assistantDetailsSummary {
   cursor: pointer;
   list-style: none;
   padding: 10px;
+  border-top: 1px solid var(--bg-btn-disabled);
   font-family: var(--font-family-bold);
   font-size: 14px;
   color: var(--text-primary);
@@ -430,8 +521,7 @@
 }
 
 .assistantDetailsBody {
-  border-top: 1px solid var(--bg-btn-disabled);
-  padding: 10px;
+  padding: 0 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 12px;

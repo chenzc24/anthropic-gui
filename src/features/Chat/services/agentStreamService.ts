@@ -264,7 +264,6 @@ export const startAgentStream = async ({
       lastMainStepKey = dedupeKey;
 
       const statusIcon = status === 'failed' ? '❌' : '✅';
-      const statusText = status === 'failed' ? 'Failed' : 'Completed';
 
       let section = '';
       if (!mainTitleAdded) {
@@ -273,16 +272,13 @@ export const startAgentStream = async ({
       }
 
       section += `\n### ${statusIcon} Step ${stepCounter} · ${toolLabel}\n`;
-      section += `> **Status:** ${statusText}\n`;
       if (rawOutput) {
-        section += '> **Output:**\n';
         section += '> ```text\n';
         for (const line of rawOutput.split(/\r?\n/)) {
           section += `> ${line}\n`;
         }
         section += '> ```\n';
       } else if (mainInfoLines.length > 0) {
-        section += '> **Output:**\n';
         section += '> ```text\n';
         for (const line of mainInfoLines) {
           section += `> ${line}\n`;
@@ -509,6 +505,10 @@ export const startAgentStream = async ({
                   name: pendingEditorFile.name,
                   path: pendingEditorFile.path || '',
                   url: pendingEditorFile.url || pendingEditorFile.path || '',
+                  process_node:
+                    pendingEditorFile.process_node ||
+                    pendingEditorFile?.metadata?.process_node ||
+                    null,
                 };
 
                 localStorage.setItem(
@@ -682,23 +682,7 @@ export const startAgentStream = async ({
           }
 
           if (type === 'status' && content) {
-            const statusDelta =
-              makeSafeMarkdownSectionPrefix(assistantTextBuffer) +
-              `> ${String(content)}\n`;
-
-            store.dispatch(
-              appendContentById({
-                chatId,
-                contentId: assistantContentId,
-                textDelta: statusDelta,
-              }),
-            );
-            appendDetailBlock({
-              type: 'status',
-              content: String(content),
-              timestamp: Date.now(),
-            });
-            assistantTextBuffer += statusDelta;
+            continue;
           }
         } catch (error) {
           void error;

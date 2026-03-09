@@ -17,6 +17,7 @@ export const LayoutEditor = () => {
     selectedIds,
     setGraph,
     setEditorSourcePath,
+    setEditorProcessNode,
   } = useIORingStore();
 
   useEffect(() => {
@@ -28,6 +29,10 @@ export const LayoutEditor = () => {
         const pending = JSON.parse(raw);
         const fileUrl = pending?.url;
         const filePath = pending?.path || null;
+        const pendingProcessNode =
+          typeof pending?.process_node === 'string' && pending.process_node
+            ? String(pending.process_node).toUpperCase()
+            : null;
         if (!fileUrl) return;
 
         const res = await fetch(fileUrl);
@@ -36,9 +41,27 @@ export const LayoutEditor = () => {
         }
 
         const json = await res.json();
-        const internalGraph = importAdapter(json);
+        const jsonProcessNode =
+          typeof json?.ring_config?.process_node === 'string' &&
+          json?.ring_config?.process_node
+            ? String(json.ring_config.process_node).toUpperCase()
+            : null;
+        const resolvedProcessNode = jsonProcessNode || pendingProcessNode;
+
+        const graphSource = {
+          ...json,
+          ring_config: {
+            ...(json?.ring_config || {}),
+            ...(resolvedProcessNode
+              ? { process_node: resolvedProcessNode }
+              : {}),
+          },
+        };
+
+        const internalGraph = importAdapter(graphSource);
         setGraph(internalGraph);
         setEditorSourcePath(filePath);
+        setEditorProcessNode(resolvedProcessNode);
       } catch (error) {
         void error;
       } finally {
@@ -47,7 +70,7 @@ export const LayoutEditor = () => {
     };
 
     void tryLoadPendingEditorFile();
-  }, [setGraph, setEditorSourcePath]);
+  }, [setGraph, setEditorProcessNode, setEditorSourcePath]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

@@ -1,12 +1,252 @@
 import { create } from 'zustand';
 
 import { IntentGraph, Instance, Side } from '../types';
-import { buildPinConfigTemplate } from '../utils/pinConfigTemplates';
+import {
+  buildPinConfigTemplate,
+  classifyDeviceForProcess,
+  getSupportedDevicesForProcess,
+  isSupportedDeviceForProcess,
+} from '../utils/pinConfigTemplates';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 type PlacementOrder = 'clockwise' | 'counterclockwise';
 type CornerLocation = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
+type AddInstanceType =
+  | 'pad'
+  | 'corner'
+  | 'corner_analog'
+  | 'corner_digital'
+  | 'filler'
+  | 'filler10'
+  | 'filler20'
+  | 'filler10a'
+  | 'filler20a'
+  | 'blank'
+  | 'space'
+  | 'cut';
+
+const DEFAULT_PAD_DEVICE_BY_PROCESS: Record<string, string> = {
+  T180: 'PVDD1CDG',
+  T28: 'PDDW16SDGZ_V_G',
+};
+
+const resolveProcessNodeKey = (processNode?: string): 'T180' | 'T28' =>
+  String(processNode || 'T180')
+    .toUpperCase()
+    .includes('28')
+    ? 'T28'
+    : 'T180';
+
+const resolveCornerDevice = (
+  processNode?: string,
+  type: AddInstanceType = 'corner',
+): string => {
+  const processKey = resolveProcessNodeKey(processNode);
+  if (processKey === 'T28') {
+    if (type === 'corner_digital') return 'PCORNER_G';
+    return 'PCORNERA_G';
+  }
+  return 'PCORNER';
+};
+
+const resolvePeripheralDevice = (
+  processNode?: string,
+  type: AddInstanceType = 'pad',
+): {
+  namePrefix: string;
+  device: string;
+  normalizedType: 'filler' | 'blank';
+} | null => {
+  const processKey = resolveProcessNodeKey(processNode);
+
+  if (type === 'blank' || type === 'space') {
+    return { namePrefix: 'BLANK', device: 'BLANK', normalizedType: 'blank' };
+  }
+
+  if (type === 'cut') {
+    if (processKey === 'T28') {
+      return {
+        namePrefix: 'CUT',
+        device: 'PRCUTA_G',
+        normalizedType: 'filler',
+      };
+    }
+    return { namePrefix: 'CUT', device: 'PFILLER10', normalizedType: 'filler' };
+  }
+
+  if (
+    type === 'filler' ||
+    type === 'filler10' ||
+    type === 'filler20' ||
+    type === 'filler10a' ||
+    type === 'filler20a'
+  ) {
+    if (processKey === 'T28') {
+      const t28FillerMap: Record<string, string> = {
+        filler10a: 'PFILLER10A_G',
+        filler20a: 'PFILLER20A_G',
+        filler10: 'PFILLER10_G',
+        filler20: 'PFILLER20_G',
+        filler: 'PFILLER20A_G',
+      };
+      return {
+        namePrefix: 'FILLER',
+        device: t28FillerMap[type] || t28FillerMap.filler,
+        normalizedType: 'filler',
+      };
+    }
+
+    const t180FillerMap: Record<string, string> = {
+      filler10: 'PFILLER10',
+      filler20: 'PFILLER20',
+      filler: 'PFILLER20',
+      filler10a: 'PFILLER10',
+      filler20a: 'PFILLER20',
+    };
+    return {
+      namePrefix: 'FILLER',
+      device: t180FillerMap[type] || t180FillerMap.filler,
+      normalizedType: 'filler',
+    };
+  }
+
+  return null;
+};
+
+const resolvePadWidthFromDevice = (device?: string): number | null => {
+  const normalizedDevice = String(device || '').toUpperCase();
+
+  if (normalizedDevice === 'BLANK' || normalizedDevice.includes('RCUT')) {
+    return 10;
+  }
+
+  const fillerMatch = normalizedDevice.match(/PFILLER(\d+)/);
+  if (fillerMatch) {
+    const parsed = Number(fillerMatch[1]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 10;
+  }
+
+  return null;
+};
+
+const isFillerLike = (inst: Instance): boolean => {
+  const compType = String(inst.type || '').toLowerCase();
+  const device = String(inst.device || '').toUpperCase();
+  return (
+    compType === 'filler' ||
+    compType === 'blank' ||
+    device.includes('FILLER') ||
+    device.includes('RCUT') ||
+    device === 'BLANK'
+  );
+};
+
+const hasOwn = (obj: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(obj, key);
+
+const isPinConfigRecord = (
+  value: unknown,
+): value is Record<string, { label?: unknown }> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+const normalizePinConfig = (config: unknown): Record<string, string> | null => {
+  if (!isPinConfigRecord(config)) {
+    return null;
+  }
+
+  const normalized: Record<string, string> = {};
+  Object.keys(config)
+    .sort()
+    .forEach(pin => {
+      const entry = config[pin];
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        normalized[pin] = String(entry.label ?? '');
+      } else {
+        normalized[pin] = String(entry ?? '');
+      }
+    });
+
+  return normalized;
+};
+
+const pinConfigsEqual = (left: unknown, right: unknown): boolean => {
+  const l = normalizePinConfig(left);
+  const r = normalizePinConfig(right);
+  if (!l || !r) return false;
+  return JSON.stringify(l) === JSON.stringify(r);
+};
+
+const buildTemplateForInstance = (
+  inst: Instance,
+  ringConfig: IntentGraph['ring_config'],
+) =>
+  buildPinConfigTemplate({
+    processNode: ringConfig?.process_node,
+    device: inst.device,
+    instanceName: inst.name,
+    domain: (inst as any).domain,
+    pinConfigProfiles: ringConfig?.pin_connection_profiles,
+  });
+
+const hasCustomPinConfig = (
+  inst: Instance,
+  ringConfig: IntentGraph['ring_config'],
+): boolean => {
+  const current = (inst as any).pin_connection;
+  if (!isPinConfigRecord(current)) {
+    return false;
+  }
+
+  const template = buildTemplateForInstance(inst, ringConfig);
+  if (!template) {
+    return true;
+  }
+
+  return !pinConfigsEqual(current, template);
+};
+
+const shouldRebuildPinConfig = (
+  previous: Instance,
+  partial: Partial<Instance>,
+  ringConfig: IntentGraph['ring_config'],
+): boolean => {
+  if (hasOwn(partial, 'pin_connection')) {
+    return false;
+  }
+
+  const triggerRebuild =
+    hasOwn(partial, 'device') ||
+    hasOwn(partial, 'domain') ||
+    hasOwn(partial, 'name');
+
+  if (!triggerRebuild) {
+    return false;
+  }
+
+  if (hasCustomPinConfig(previous, ringConfig)) {
+    return false;
+  }
+
+  const next = { ...previous, ...partial } as Instance;
+  return isSupportedDeviceForProcess(ringConfig?.process_node, next.device);
+};
+
+const resolveDefaultPadDevice = (processNode?: string): string => {
+  const normalized = String(processNode || 'T180').toUpperCase();
+  const preferred = DEFAULT_PAD_DEVICE_BY_PROCESS[normalized];
+  const supported = getSupportedDevicesForProcess(normalized);
+
+  if (preferred && supported.includes(preferred)) {
+    return preferred;
+  }
+
+  if (supported.length > 0) {
+    return supported[0];
+  }
+
+  return 'GenericeDevice';
+};
 
 const toPositiveNumber = (value: unknown, fallback: number): number => {
   const numeric = Number(value);
@@ -14,6 +254,11 @@ const toPositiveNumber = (value: unknown, fallback: number): number => {
     return numeric;
   }
   return fallback;
+};
+
+const isPadLikeInstance = (inst: Instance): boolean => {
+  const compType = String(inst.type || '').toLowerCase();
+  return compType === 'pad';
 };
 
 const inferPerimeterWidth = (
@@ -195,9 +440,14 @@ const withAutoSideCounts = (graph: IntentGraph): IntentGraph => {
       inst.side === 'bottom' ||
       inst.side === 'left'
     ) {
-      counts[inst.side] += 1;
+      if (isPadLikeInstance(inst)) {
+        counts[inst.side] += 1;
+      }
     }
   });
+
+  const width = Math.max(counts.top, counts.bottom, 1);
+  const height = Math.max(counts.left, counts.right, 1);
 
   const ringConfig = graph.ring_config || ({} as IntentGraph['ring_config']);
   const hasPatternA =
@@ -217,6 +467,8 @@ const withAutoSideCounts = (graph: IntentGraph): IntentGraph => {
     ...graph,
     ring_config: {
       ...ringConfig,
+      width,
+      height,
       ...(usePatternA
         ? {
             top_count: counts.top,
@@ -358,18 +610,12 @@ const withAutoPinConfig = (
   ringConfig: IntentGraph['ring_config'],
   force = false,
 ): Instance => {
-  const existingPinConfig = inst.meta?.pin_config ?? (inst as any).pin_config;
+  const existingPinConfig = (inst as any).pin_connection;
   if (!force && existingPinConfig && typeof existingPinConfig === 'object') {
     return inst;
   }
 
-  const generated = buildPinConfigTemplate({
-    processNode: ringConfig?.process_node,
-    device: inst.device,
-    instanceName: inst.name,
-    domain: (inst as any).domain ?? inst.meta?.domain,
-    pinConfigProfiles: ringConfig?.pin_config_profiles,
-  });
+  const generated = buildTemplateForInstance(inst, ringConfig);
 
   if (!generated) {
     return inst;
@@ -377,10 +623,7 @@ const withAutoPinConfig = (
 
   return {
     ...inst,
-    meta: {
-      ...(inst.meta || {}),
-      pin_config: generated,
-    },
+    pin_connection: generated,
   };
 };
 
@@ -396,6 +639,7 @@ interface IORingState {
   selectedIds: string[];
   clipboard: Instance | null;
   editorSourcePath: string | null;
+  editorProcessNode: string | null;
 
   // History
   history: HistoryState;
@@ -403,6 +647,7 @@ interface IORingState {
   // Actions
   setGraph: (graph: IntentGraph) => void;
   setEditorSourcePath: (path: string | null) => void;
+  setEditorProcessNode: (processNode: string | null) => void;
   selectInstance: (id: string | null, additive?: boolean) => void;
   selectInstances: (ids: string[], additive?: boolean) => void;
   clearSelection: () => void;
@@ -451,6 +696,7 @@ export const useIORingStore = create<IORingState>((set, get) => {
     selectedIds: [],
     clipboard: null,
     editorSourcePath: null,
+    editorProcessNode: null,
     history: { past: [], future: [] },
 
     setGraph: graph => {
@@ -479,6 +725,8 @@ export const useIORingStore = create<IORingState>((set, get) => {
     },
 
     setEditorSourcePath: path => set({ editorSourcePath: path }),
+    setEditorProcessNode: processNode =>
+      set({ editorProcessNode: processNode }),
 
     selectInstance: (id, additive = false) =>
       set(state => {
@@ -526,9 +774,27 @@ export const useIORingStore = create<IORingState>((set, get) => {
 
       const newInstances = graph.instances.map((inst: Instance) => {
         if (inst.id !== id) return inst;
-        return withAutoPinConfig(
-          { ...inst, ...partial } as Instance,
+        const nextPartial = { ...partial };
+        if (hasOwn(partial, 'device') && !hasOwn(partial, 'pad_width')) {
+          const nextCandidate = { ...inst, ...partial } as Instance;
+          if (isFillerLike(nextCandidate)) {
+            const autoWidth = resolvePadWidthFromDevice(nextCandidate.device);
+            if (autoWidth !== null) {
+              nextPartial.pad_width = autoWidth;
+            }
+          }
+        }
+
+        const forceRebuild = shouldRebuildPinConfig(
+          inst,
+          nextPartial,
           graph.ring_config,
+        );
+
+        return withAutoPinConfig(
+          { ...inst, ...nextPartial } as Instance,
+          graph.ring_config,
+          forceRebuild,
         );
       });
 
@@ -767,18 +1033,30 @@ export const useIORingStore = create<IORingState>((set, get) => {
     addInstance: (side, type = 'pad') => {
       pushHistory();
       const { graph, selectedId } = get();
+      const requestedType = String(
+        type || 'pad',
+      ).toLowerCase() as AddInstanceType;
 
-      if (type === 'corner') {
+      if (
+        requestedType === 'corner' ||
+        requestedType === 'corner_analog' ||
+        requestedType === 'corner_digital'
+      ) {
         const cornerLocation = getFirstEmptyCornerLocation(graph);
         if (!cornerLocation) {
           return;
         }
 
+        const cornerDevice = resolveCornerDevice(
+          graph.ring_config?.process_node,
+          requestedType,
+        );
+
         const cornerInst: Instance = withCornerLocation(
           {
             id: generateId(),
             name: `CORNER_${cornerLocation}`,
-            device: 'PCORNER',
+            device: cornerDevice,
             type: 'corner',
             side: 'corner' as Side,
             order: 1,
@@ -815,14 +1093,37 @@ export const useIORingStore = create<IORingState>((set, get) => {
       // Case 2: Append to specified side (default behavior) -> targetSide stays as 'side' arg
 
       let namePrefix = 'INST';
-      let device = 'GenericeDevice';
+      let device = resolveDefaultPadDevice(graph.ring_config?.process_node);
+      let normalizedType = requestedType;
+      const businessDefaults: Partial<Instance> = {};
 
-      if (type === 'filler') {
-        namePrefix = 'FILLER';
-        device = 'PFILLER20';
-      } else if (type === 'blank' || type === 'space') {
-        namePrefix = 'BLANK';
-        device = 'BLANK';
+      const peripheralConfig = resolvePeripheralDevice(
+        graph.ring_config?.process_node,
+        requestedType,
+      );
+
+      if (peripheralConfig) {
+        namePrefix = peripheralConfig.namePrefix;
+        device = peripheralConfig.device;
+        normalizedType = peripheralConfig.normalizedType;
+      } else {
+        const processNode = String(
+          graph.ring_config?.process_node || 'T180',
+        ).toUpperCase();
+        const deviceClass = classifyDeviceForProcess(
+          graph.ring_config?.process_node,
+          device,
+        );
+
+        if (processNode === 'T180') {
+          // T180 keeps domain user-editable; this is only initial default filling.
+          businessDefaults.domain =
+            deviceClass === 'analog' ? 'analog' : 'digital';
+        }
+
+        if (deviceClass === 'digital') {
+          businessDefaults.direction = 'input';
+        }
       }
 
       // Get instances for the target side, sorted by order
@@ -848,11 +1149,19 @@ export const useIORingStore = create<IORingState>((set, get) => {
         id: generateId(),
         name: `${namePrefix}_${sideInstances.length + 1}`,
         device: device,
-        type: type,
+        type: normalizedType,
         side: targetSide,
         order: 1, // Will be set by re-indexing
         meta: {},
+        ...businessDefaults,
       };
+
+      if (isFillerLike(newInst)) {
+        const autoWidth = resolvePadWidthFromDevice(newInst.device);
+        if (autoWidth !== null) {
+          newInst.pad_width = autoWidth;
+        }
+      }
 
       const newInstWithPinConfig = withAutoPinConfig(
         newInst,

@@ -8,18 +8,18 @@
 .chatGeneralContainer {
   display: flex;
   flex-direction: column;
-  padding: 0 30px 25px;
+  padding: 0 14px 16px;
   margin: 0 auto;
   align-items: center;
   width: 100%;
   height: 100%;
   overflow-y: hidden;
   overflow-x: hidden;
-  max-width: 1500px;
+  max-width: none;
   position: relative;
 
   @media (width >= 1900px) {
-    padding: 0 100px 25px;
+    padding: 0 22px 18px;
   }
 }
 
@@ -30,14 +30,14 @@
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   box-sizing: border-box;
   padding-bottom: 16px;
-  scrollbar-gutter: stable both-edges;
+  scrollbar-gutter: stable;
 }
 
 .chatGeneralContainerNew {
-  padding: 30px 30px 25px;
+  padding: 16px 14px;
 }
 
 .conversationName {
@@ -218,8 +218,8 @@
   margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 10px;
+  gap: 8px;
+  padding-top: 8px;
   position: relative;
   z-index: 2;
 }
@@ -330,7 +330,7 @@
   width: 100%;
   display: flex;
   align-items: stretch;
-  gap: 10px;
+  gap: 8px;
 }
 
 .composerInput {

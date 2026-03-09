@@ -31,6 +31,52 @@ const WHEEL_ZOOM_SENSITIVITY = 0.0015;
 const LEFT_GUTTER = 20;
 const RIGHT_GUTTER = 12;
 
+const T28_DEVICE_COLORS: Record<string, string> = {
+  PDB3AC: '#4A90E2',
+  PDB3AC_H_G: '#4A90E2',
+  PDB3AC_V_G: '#4A90E2',
+  PVDD1AC: '#5BA0F2',
+  PVDD1AC_H_G: '#5BA0F2',
+  PVDD1AC_V_G: '#5BA0F2',
+  PVSS1AC: '#3A80D2',
+  PVSS1AC_H_G: '#3A80D2',
+  PVSS1AC_V_G: '#3A80D2',
+  PVDD3AC: '#87CEEB',
+  PVDD3AC_H_G: '#87CEEB',
+  PVDD3AC_V_G: '#87CEEB',
+  PVSS3AC: '#4682B4',
+  PVSS3AC_H_G: '#4682B4',
+  PVSS3AC_V_G: '#4682B4',
+  PVDD3A: '#7EC8E3',
+  PVDD3A_H_G: '#7EC8E3',
+  PVDD3A_V_G: '#7EC8E3',
+  PVSS3A: '#3E7AB0',
+  PVSS3A_H_G: '#3E7AB0',
+  PVSS3A_V_G: '#3E7AB0',
+  PDDW16SDGZ: '#32CD32',
+  PDDW16SDGZ_H_G: '#32CD32',
+  PDDW16SDGZ_V_G: '#32CD32',
+  PVDD1DGZ: '#90EE90',
+  PVDD1DGZ_H_G: '#90EE90',
+  PVDD1DGZ_V_G: '#90EE90',
+  PVDD2POC: '#90EE90',
+  PVDD2POC_H_G: '#90EE90',
+  PVDD2POC_V_G: '#90EE90',
+  PVSS1DGZ: '#228B22',
+  PVSS1DGZ_H_G: '#228B22',
+  PVSS1DGZ_V_G: '#228B22',
+  PVSS2DGZ: '#228B22',
+  PVSS2DGZ_H_G: '#228B22',
+  PVSS2DGZ_V_G: '#228B22',
+  PCORNERA_G: '#FF6B6B',
+  PCORNER_G: '#FF8888',
+  PFILLER10A_G: '#D8D8D8',
+  PFILLER20A_G: '#D8D8D8',
+  PFILLER10_G: '#C0C0C0',
+  PFILLER20_G: '#C0C0C0',
+  PRCUTA_G: '#A0A0A0',
+};
+
 export const RingCanvas: React.FC = () => {
   const {
     graph,
@@ -89,14 +135,30 @@ export const RingCanvas: React.FC = () => {
     dimensions: {},
   }) as any;
   const dims = metadata.dimensions || {};
+  const ringProcessNode = String(
+    graph?.ring_config?.process_node || '',
+  ).toUpperCase();
+  const isT28Node = ringProcessNode.includes('28');
+
+  const ringPadW = Number(graph?.ring_config?.pad_width || 0);
+  const ringPadH = Number(graph?.ring_config?.pad_height || 0);
+  const ringCorner = Number(graph?.ring_config?.corner_size || 0);
+
+  const PAD_W_DEFAULT =
+    ringPadW > 0 ? ringPadW : isT28Node ? 20 : FALLBACK_PAD_W;
+  const PAD_H_DEFAULT =
+    ringPadH > 0 ? ringPadH : isT28Node ? 110 : FALLBACK_PAD_H;
+  const CORNER_DEFAULT =
+    ringCorner > 0 ? ringCorner : isT28Node ? 110 : FALLBACK_CORNER_SIZE;
+  const FILLER_DEFAULT = isT28Node ? PAD_W_DEFAULT : FALLBACK_FILLER_W;
 
   // Calculate scaled dimensions based on metadata or fallback
   const FILLER_W_LOGICAL =
-    (dims.filler_10_width || FALLBACK_FILLER_W) * DEFAULT_SCALE;
+    (dims.filler_width || FILLER_DEFAULT) * DEFAULT_SCALE;
   const FILLER10_W_LOGICAL =
     (dims.filler_10_width || FALLBACK_FILLER10_W) * DEFAULT_SCALE;
   const CORNER_SIZE_VISUAL =
-    (dims.corner_size || FALLBACK_CORNER_SIZE) * DEFAULT_SCALE;
+    (dims.corner_size || CORNER_DEFAULT) * DEFAULT_SCALE;
 
   const inferFillerWidth = useCallback(
     (inst: Instance) => {
@@ -116,6 +178,9 @@ export const RingCanvas: React.FC = () => {
       }
 
       const dev = String(inst.device || '').toUpperCase();
+      if (dev.includes('RCUT')) {
+        return FILLER_W_LOGICAL;
+      }
       const match = dev.match(/PFILLER(\d+)/);
       if (match) {
         const v = Number(match[1]);
@@ -158,6 +223,23 @@ export const RingCanvas: React.FC = () => {
 
     if (metadata.colors?.[device]) {
       return metadata.colors[device];
+    }
+
+    if (metadata.colors?.[upperDevice]) {
+      return metadata.colors[upperDevice];
+    }
+
+    if (isT28Node) {
+      if (T28_DEVICE_COLORS[upperDevice]) {
+        return T28_DEVICE_COLORS[upperDevice];
+      }
+
+      const t28Prefix = Object.entries(T28_DEVICE_COLORS).find(([key]) =>
+        upperDevice.startsWith(key),
+      );
+      if (t28Prefix) {
+        return t28Prefix[1];
+      }
     }
 
     if (upperDevice.includes('CORNER') || upperDevice === 'PCORNER') {
@@ -204,20 +286,20 @@ export const RingCanvas: React.FC = () => {
           inst.pad_height ||
             inst.pad_width ||
             dims.corner_size ||
-            FALLBACK_CORNER_SIZE,
+            CORNER_DEFAULT,
         );
         return corner * DEFAULT_SCALE;
       }
       if (category === 'filler' || category === 'blank') {
         const fillerH = Number(
-          inst.pad_height || dims.pad_height || FALLBACK_PAD_H,
+          inst.pad_height || dims.pad_height || PAD_H_DEFAULT,
         );
         return fillerH * DEFAULT_SCALE;
       }
-      const padH = Number(inst.pad_height || dims.pad_height || FALLBACK_PAD_H);
+      const padH = Number(inst.pad_height || dims.pad_height || PAD_H_DEFAULT);
       return padH * DEFAULT_SCALE;
     },
-    [dims.corner_size, dims.pad_height],
+    [CORNER_DEFAULT, PAD_H_DEFAULT, dims.corner_size, dims.pad_height],
   );
 
   // Helper: Get visual width along the perimeter for an instance
@@ -226,7 +308,7 @@ export const RingCanvas: React.FC = () => {
       const category = getDeviceCategory(inst);
       if (category === 'corner') {
         const corner = Number(
-          inst.pad_width || dims.corner_size || FALLBACK_CORNER_SIZE,
+          inst.pad_width || dims.corner_size || CORNER_DEFAULT,
         );
         return corner * DEFAULT_SCALE;
       }
@@ -237,10 +319,16 @@ export const RingCanvas: React.FC = () => {
       ) {
         return inferFillerWidth(inst);
       }
-      const padW = Number(inst.pad_width || dims.pad_width || FALLBACK_PAD_W);
+      const padW = Number(inst.pad_width || dims.pad_width || PAD_W_DEFAULT);
       return padW * DEFAULT_SCALE;
     },
-    [dims.corner_size, dims.pad_width, inferFillerWidth],
+    [
+      CORNER_DEFAULT,
+      PAD_W_DEFAULT,
+      dims.corner_size,
+      dims.pad_width,
+      inferFillerWidth,
+    ],
   );
 
   const getTextRotation = (side: Side) => {
@@ -949,12 +1037,26 @@ export const RingCanvas: React.FC = () => {
                   : 'black';
                 const strokeWidth = isSelected ? 3 : 2;
                 const strokeDash = isSpace || isBlank ? '4 2' : undefined;
-                const fontSize =
+                const baseFontSize =
                   category === 'corner'
                     ? 8
                     : category === 'filler' || category === 'blank'
                     ? 6
                     : 7;
+                const t28BaseFontSize =
+                  category === 'corner'
+                    ? 6
+                    : category === 'filler' || category === 'blank'
+                    ? 4.5
+                    : 5.5;
+                const maxByShape = Math.max(4, Math.min(w, h) * 0.42);
+                const fontSize = Math.max(
+                  4,
+                  Math.min(
+                    isT28Node ? t28BaseFontSize : baseFontSize,
+                    maxByShape,
+                  ),
+                );
 
                 return (
                   <g
@@ -999,7 +1101,15 @@ export const RingCanvas: React.FC = () => {
                           textAnchor="middle"
                           dy=".3em"
                           className="font-mono pointer-events-none select-none"
-                          style={{ fontSize: `${fontSize}px`, fill: '#000' }}
+                          style={{
+                            fontSize: `${fontSize}px`,
+                            fill: '#111827',
+                            stroke: 'rgba(255, 255, 255, 0.92)',
+                            strokeWidth: 0.9,
+                            paintOrder: 'stroke fill',
+                            textRendering: 'geometricPrecision',
+                            fontWeight: 600,
+                          }}
                         >
                           {label}
                         </text>

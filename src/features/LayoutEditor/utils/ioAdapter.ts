@@ -13,6 +13,24 @@ interface ExternalInstance {
   [key: string]: any;
 }
 
+const RUNTIME_META_KEYS = [
+  'location',
+  '_relative_position',
+  '_original_position',
+  'position',
+];
+
+const BUSINESS_KEYS = [
+  'view_name',
+  'domain',
+  'pad_width',
+  'pad_height',
+  'pin_connection',
+  'direction',
+  'voltage_domain',
+  'orientation',
+];
+
 /**
  * Parses external JSON format into internal GUI format.
  * Supports both Legacy (position strings) and New (side/order + visual_metadata) formats.
@@ -41,7 +59,21 @@ export const importAdapter = (json: any): IntentGraph => {
         ? { ...(rawMeta as Record<string, any>) }
         : {};
 
-    let finalSide: Side | 'corner' = 'top'; // Default
+    const runtimeMeta: Record<string, any> = {};
+    RUNTIME_META_KEYS.forEach(key => {
+      if (normalizedMeta[key] !== undefined) {
+        runtimeMeta[key] = normalizedMeta[key];
+      }
+    });
+
+    const migratedBusinessFields: Record<string, any> = {};
+    BUSINESS_KEYS.forEach(key => {
+      if (rest[key] === undefined && normalizedMeta[key] !== undefined) {
+        migratedBusinessFields[key] = normalizedMeta[key];
+      }
+    });
+
+    let finalSide: Side | 'corner';
     let finalOrder = 0;
 
     // Check if new format (explicit side/order)
@@ -62,13 +94,20 @@ export const importAdapter = (json: any): IntentGraph => {
       } else if (cornerMatch) {
         finalSide = 'corner';
         // eslint-disable-next-line @typescript-eslint/dot-notation
-        normalizedMeta['_original_position'] = position;
+        runtimeMeta['_original_position'] = position;
       } else {
-        finalSide = 'corner'; // Fallback
+        const instanceLabel = String(name || device || rawId || 'unknown');
+        throw new Error(
+          `Invalid position format for instance '${instanceLabel}': '${position}'. ` +
+            "Expected 'top_N/right_N/bottom_N/left_N' or corner token.",
+        );
       }
     } else {
-      // Fallback or Unknown
-      finalSide = 'corner';
+      const instanceLabel = String(name || device || rawId || 'unknown');
+      throw new Error(
+        `Missing position for instance '${instanceLabel}'. ` +
+          'Expected explicit side+order or relative position string.',
+      );
     }
 
     // Ensure ID exists
@@ -81,9 +120,10 @@ export const importAdapter = (json: any): IntentGraph => {
       type: type || 'unknown',
       side: finalSide as Side, // Cast to satisfy type system
       order: finalOrder,
+      ...migratedBusinessFields,
+      ...rest,
       meta: {
-        ...normalizedMeta,
-        ...rest,
+        ...runtimeMeta,
         // If it was a legacy corner, we might have added _original_position here
         // Preserve position if it's coordinates
         ...(Array.isArray(position) ? { position } : {}),
@@ -117,11 +157,35 @@ export const importAdapter = (json: any): IntentGraph => {
 // Return type any to fit backend expected structure
 export const exportAdapter = (graph: IntentGraph): any => {
   const exportedInstances = graph.instances.map(inst => {
-    const { side, order, meta, name, device, type } = inst;
+    const { side, order, meta, name, device, type, id, ...topLevelFields } =
+      inst as Instance & Record<string, any>;
 
     // Extract metadata
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { _original_position, position: metaPos, ...otherMeta } = meta || {};
+    const { _original_position, position: metaPos } = meta || {};
+
+    const normalizedPinConnection =
+      topLevelFields.pin_connection &&
+      typeof topLevelFields.pin_connection === 'object'
+        ? topLevelFields.pin_connection
+        : undefined;
+
+    const exportedBusinessFields: Record<string, any> = {};
+    const businessKeys = [
+      'view_name',
+      'domain',
+      'pad_width',
+      'pad_height',
+      'direction',
+      'voltage_domain',
+      'orientation',
+    ];
+
+    businessKeys.forEach(key => {
+      if (topLevelFields[key] !== undefined) {
+        exportedBusinessFields[key] = topLevelFields[key];
+      }
+    });
 
     const normalizedOrder = Number.isFinite(Number(order))
       ? Math.max(1, Number(order))
@@ -149,12 +213,15 @@ export const exportAdapter = (graph: IntentGraph): any => {
     }
 
     return {
-      id: inst.id,
+      id,
       name,
       device,
       type,
       position, // Pass position back if we have it
-      ...otherMeta, // Spread preserved fields (domain, pins, visual props)
+      ...(normalizedPinConnection
+        ? { pin_connection: normalizedPinConnection }
+        : {}),
+      ...exportedBusinessFields,
     };
   });
 

@@ -701,40 +701,97 @@ export const EditablePrompt = memo(
                   shouldUseStructuredAssistant ? (
                     <div className={styles.assistantStructuredContainer}>
                       <div className={styles.assistantPrimaryBlock}>
-                        {hasMeaningfulText(mainText) ? (
-                          <MarkdownDisplay content={mainText || ''} />
-                        ) : (
-                          <div className={styles.assistantPrimaryPlaceholder}>
-                            Waiting for primary answer...
-                          </div>
+                        <div className={styles.assistantPrimaryContent}>
+                          {hasMeaningfulText(mainText) ? (
+                            <MarkdownDisplay content={mainText || ''} />
+                          ) : (
+                            <div className={styles.assistantPrimaryPlaceholder}>
+                              Waiting for primary answer...
+                            </div>
+                          )}
+                        </div>
+
+                        {hasMeaningfulText(fullReasoningText || text) && (
+                          <details className={styles.assistantDetailsCollapse}>
+                            <summary className={styles.assistantDetailsSummary}>
+                              <span>Full reasoning</span>
+                              <span className={styles.assistantDetailsCount}>
+                                streaming
+                              </span>
+                            </summary>
+                            <div className={styles.assistantDetailsBody}>
+                              <div className={styles.assistantStreamContainer}>
+                                <MarkdownDisplay
+                                  content={fullReasoningText || text}
+                                />
+                              </div>
+                            </div>
+                          </details>
                         )}
                       </div>
-
-                      {hasMeaningfulText(fullReasoningText || text) && (
-                        <details className={styles.assistantDetailsCollapse}>
-                          <summary className={styles.assistantDetailsSummary}>
-                            <span>Full reasoning</span>
-                            <span className={styles.assistantDetailsCount}>
-                              streaming
-                            </span>
-                          </summary>
-                          <div className={styles.assistantDetailsBody}>
-                            <div className={styles.assistantStreamContainer}>
-                              <MarkdownDisplay
-                                content={fullReasoningText || text}
-                              />
-                            </div>
-                          </div>
-                        </details>
-                      )}
                     </div>
                   ) : (
                     <MarkdownDisplay content={text} />
                   )
                 ) : displayOnlyHuman ? (
-                  hasMeaningfulText(text) ? (
-                    <MarkdownDisplay content={text} />
-                  ) : null
+                  <div className={styles.humanCardSections}>
+                    {hasMeaningfulText(text) ? (
+                      <div className={styles.humanCardBodySection}>
+                        <MarkdownDisplay content={text} />
+                      </div>
+                    ) : null}
+
+                    {!!humanAttachments?.length && (
+                      <div className={styles.humanCardFooterSection}>
+                        <details
+                          className={styles.humanAttachmentsCollapse}
+                          open
+                        >
+                          <summary className={styles.humanAttachmentsSummary}>
+                            <span>Attachments</span>
+                            <span className={styles.humanAttachmentsCount}>
+                              {humanAttachments.length}
+                            </span>
+                          </summary>
+                          <div className={styles.humanAttachmentsBody}>
+                            <div className={styles.attachmentList}>
+                              {humanAttachments.map(attachment => (
+                                <div
+                                  key={attachment.id}
+                                  className={styles.attachmentItem}
+                                >
+                                  <button
+                                    className={styles.attachmentPreviewBtn}
+                                    type="button"
+                                    onClick={() =>
+                                      setPreviewAttachment({
+                                        name: attachment.name,
+                                        url: attachment.url,
+                                        category: attachment.category,
+                                        path: attachment.path,
+                                      })
+                                    }
+                                  >
+                                    <Paperclip size={14} />
+                                    <span>{attachment.name}</span>
+                                  </button>
+                                  <a
+                                    href={normalizeClientFileUrl(attachment.url)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className={styles.attachmentDownloadLink}
+                                  >
+                                    <Download size={14} />
+                                    <span>Download</span>
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </details>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <Slate
                     editor={editor}
@@ -758,45 +815,6 @@ export const EditablePrompt = memo(
             ) : null}
           </div>
         </div>
-
-        {type === 'Human' && !!humanAttachments?.length && (
-          <div className={styles.promptAttachmentRow}>
-            <div className={styles.promptAvatarColumn} />
-            <div className={styles.attachmentBox}>
-              <div className={styles.attachmentTitle}>Attachments</div>
-              <div className={styles.attachmentList}>
-                {humanAttachments.map(attachment => (
-                  <div key={attachment.id} className={styles.attachmentItem}>
-                    <button
-                      className={styles.attachmentPreviewBtn}
-                      type="button"
-                      onClick={() =>
-                        setPreviewAttachment({
-                          name: attachment.name,
-                          url: attachment.url,
-                          category: attachment.category,
-                          path: attachment.path,
-                        })
-                      }
-                    >
-                      <Paperclip size={14} />
-                      <span>{attachment.name}</span>
-                    </button>
-                    <a
-                      href={normalizeClientFileUrl(attachment.url)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={styles.attachmentDownloadLink}
-                    >
-                      <Download size={14} />
-                      <span>Download</span>
-                    </a>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
 
         {previewAttachment &&
           typeof document !== 'undefined' &&
