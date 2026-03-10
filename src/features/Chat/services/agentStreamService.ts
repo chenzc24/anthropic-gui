@@ -18,6 +18,7 @@ import { ChatContent, ChatFile, AssistantDetailBlock } from '@/typings/common';
 
 const IO_EDITOR_PENDING_KEY = 'io_editor_pending_file';
 const IO_EDITOR_RETURN_KEY = 'io_editor_return_path';
+const IO_EDITOR_PENDING_UPDATED_EVENT = 'io-editor-pending-updated';
 const TOOL_EVENT_START_MARKER = '<<<AMS_TOOL_EVENT_V1>>>';
 const TOOL_EVENT_END_MARKER = '<<<AMS_TOOL_EVENT_END>>>';
 
@@ -78,6 +79,38 @@ const stripKnownThoughtPrefix = (text: string): string =>
 
 const stripKnownExecutionPrefix = (text: string): string =>
   text.replace(/^\s*(Execution logs?:|\*\*Execution logs?:\*\*)\s*/i, '');
+
+const selectPreferredIntermediateFile = (files: any[]) => {
+  const candidates = files.filter(
+    file =>
+      typeof file?.name === 'string' &&
+      file.name.endsWith('_intermediate_editor.json'),
+  );
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((a, b) => {
+    const aCurrent = a?.is_current_turn === true ? 1 : 0;
+    const bCurrent = b?.is_current_turn === true ? 1 : 0;
+    if (aCurrent !== bCurrent) {
+      return bCurrent - aCurrent;
+    }
+
+    const aNs = Number(a?.mtime_ns || 0);
+    const bNs = Number(b?.mtime_ns || 0);
+    if (aNs !== bNs) {
+      return bNs - aNs;
+    }
+
+    const aTime = Number(a?.mtime || 0);
+    const bTime = Number(b?.mtime || 0);
+    return bTime - aTime;
+  });
+
+  return candidates[0];
+};
 
 interface StructuredToolEventPayload {
   marker?: string;
@@ -494,11 +527,7 @@ export const startAgentStream = async ({
                 timestamp: Date.now(),
               });
 
-              const pendingEditorFile = files.find(
-                file =>
-                  typeof file?.name === 'string' &&
-                  file.name.endsWith('_intermediate_editor.json'),
-              );
+              const pendingEditorFile = selectPreferredIntermediateFile(files);
 
               if (pendingEditorFile) {
                 const pendingPayload = {
@@ -516,6 +545,9 @@ export const startAgentStream = async ({
                   JSON.stringify(pendingPayload),
                 );
                 localStorage.setItem(IO_EDITOR_RETURN_KEY, `/chat/${chatId}`);
+                window.dispatchEvent(
+                  new Event(IO_EDITOR_PENDING_UPDATED_EVENT),
+                );
 
                 const editorHint =
                   makeSafeMarkdownSectionPrefix(assistantTextBuffer) +

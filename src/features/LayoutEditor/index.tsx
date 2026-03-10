@@ -8,6 +8,7 @@ import './styles.css';
 import { importAdapter } from './utils/ioAdapter';
 
 const IO_EDITOR_PENDING_KEY = 'io_editor_pending_file';
+const IO_EDITOR_PENDING_UPDATED_EVENT = 'io-editor-pending-updated';
 
 export const LayoutEditor = () => {
   const {
@@ -24,6 +25,8 @@ export const LayoutEditor = () => {
     const tryLoadPendingEditorFile = async () => {
       const raw = localStorage.getItem(IO_EDITOR_PENDING_KEY);
       if (!raw) return;
+
+      let loaded = false;
 
       try {
         const pending = JSON.parse(raw);
@@ -62,14 +65,41 @@ export const LayoutEditor = () => {
         setGraph(internalGraph);
         setEditorSourcePath(filePath);
         setEditorProcessNode(resolvedProcessNode);
+        loaded = true;
       } catch (error) {
         void error;
       } finally {
-        localStorage.removeItem(IO_EDITOR_PENDING_KEY);
+        if (loaded) {
+          localStorage.removeItem(IO_EDITOR_PENDING_KEY);
+        }
+      }
+    };
+
+    const handlePendingUpdated = () => {
+      void tryLoadPendingEditorFile();
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === IO_EDITOR_PENDING_KEY && event.newValue) {
+        void tryLoadPendingEditorFile();
       }
     };
 
     void tryLoadPendingEditorFile();
+
+    window.addEventListener(
+      IO_EDITOR_PENDING_UPDATED_EVENT,
+      handlePendingUpdated,
+    );
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener(
+        IO_EDITOR_PENDING_UPDATED_EVENT,
+        handlePendingUpdated,
+      );
+      window.removeEventListener('storage', handleStorage);
+    };
   }, [setGraph, setEditorProcessNode, setEditorSourcePath]);
 
   useEffect(() => {
