@@ -34,9 +34,9 @@ import { IconComponent } from '@/ui/IconComponent';
 import { ChatFileDrawer } from './components/ChatFileDrawer';
 import { EditablePrompt } from './components/EditablePrompt';
 import {
+  pauseAgentStream,
   setEditorNavigationHandler,
   startAgentStream,
-  stopAgentStream,
   submitAgentInput,
 } from './services/agentStreamService';
 
@@ -197,6 +197,7 @@ export const ChatSelected: React.FC = () => {
 
   const isActiveStream = streamState.activeChatId === chatId;
   const isStreaming = isActiveStream && streamState.isStreaming;
+  const isPaused = isActiveStream && streamState.isPaused;
   const isWaitingForInput = isActiveStream && streamState.isWaitingForInput;
   const inputPrompt = isActiveStream ? streamState.inputPrompt : '';
   const isLoading = isActiveStream && streamState.isLoading;
@@ -407,7 +408,7 @@ export const ChatSelected: React.FC = () => {
       return;
     }
 
-    if ((isLoading || isStreaming) && !isWaitingForInput) {
+    if ((isLoading || isStreaming) && !isWaitingForInput && !isPaused) {
       return;
     }
 
@@ -426,7 +427,7 @@ export const ChatSelected: React.FC = () => {
     }
 
     try {
-      if (isWaitingForInput) {
+      if (isWaitingForInput || isPaused) {
         const pendingPrompt = chat?.content?.[chat.content.length - 1];
 
         if (pendingPrompt?.id) {
@@ -483,6 +484,7 @@ export const ChatSelected: React.FC = () => {
     isUploading,
     isLoading,
     isStreaming,
+    isPaused,
     isWaitingForInput,
     resetComposer,
   ]);
@@ -503,7 +505,7 @@ export const ChatSelected: React.FC = () => {
   const handlePromptBlur = useCallback(() => {}, []);
 
   const stopStream = useCallback(() => {
-    stopAgentStream();
+    void pauseAgentStream();
   }, []);
 
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
@@ -692,7 +694,7 @@ export const ChatSelected: React.FC = () => {
               ref={composerTextareaRef}
               className={styles.composerInput}
               placeholder={
-                isWaitingForInput
+                isWaitingForInput || isPaused
                   ? 'Type required input for the running task...'
                   : 'Type your message...'
               }
@@ -724,7 +726,7 @@ export const ChatSelected: React.FC = () => {
                 className={styles.composerIconButton}
                 onClick={isStreaming ? stopStream : handlePromptSubmit}
                 disabled={isUploading || (isLoading && !isWaitingForInput)}
-                title={isStreaming ? 'Stop' : 'Send'}
+                title={isStreaming ? 'Pause' : 'Send'}
               >
                 {isStreaming ? (
                   <IconComponent type="stop" />

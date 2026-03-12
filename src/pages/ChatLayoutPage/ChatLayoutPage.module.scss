@@ -2,8 +2,15 @@
   height: 100vh;
   display: grid;
   grid-template-columns: minmax(250px, 340px) 1fr;
+  transition: grid-template-columns 0.2s ease;
+
+  &.collapsed {
+    grid-template-columns: 88px 1fr;
+  }
 
   @media (width >= 2400px) {
-    grid-template-columns: minmax(250px, 500px) 1fr;
+    &:not(.collapsed) {
+      grid-template-columns: minmax(250px, 500px) 1fr;
+    }
   }
 }

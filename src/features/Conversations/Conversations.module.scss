@@ -25,18 +25,6 @@
   cursor: pointer;
 }
 
-.confirmationClear {
-  flex-shrink: 0;
-  display: flex;
-  column-gap: 8px;
-  align-items: center;
-  padding: 10px 0;
-
-  svg {
-    stroke: var(--bg-default);
-  }
-}
-
 .newFolder {
   display: inline-flex;
   align-items: center;
@@ -64,10 +52,6 @@
       stroke: var(--text-primary);
     }
   }
-}
-
-.confirmationClear svg:hover {
-  stroke: var(--text-primary);
 }
 
 .newFolder:hover {
@@ -123,6 +107,41 @@
   overflow-y: auto;
   padding-right: 15px;
   scrollbar-width: thin;
+}
+
+.clearConfirmPopover {
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  background: var(--bg-color-main);
+  color: var(--text-primary);
+  margin-top: 6px;
+}
+
+.clearConfirmContent {
+  min-width: 240px;
+  max-width: 280px;
+  padding: 12px;
+}
+
+.clearConfirmTitle {
+  font-family: var(--font-family-bold);
+  font-size: 14px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.clearConfirmHint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 6px 0 0;
+}
+
+.clearConfirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .newFolderDisabled {

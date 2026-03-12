@@ -3,13 +3,19 @@ import { ApiSettingOptions } from '@/typings/common';
 export interface PromptRequest extends ApiSettingOptions {
   prompt: string;
   signal?: AbortSignal;
+  runId?: string;
 }
 
-export const submitPrompt = async ({ prompt, signal }: PromptRequest) => {
+export const submitPrompt = async ({
+  prompt,
+  signal,
+  runId,
+}: PromptRequest) => {
   // [MODIFIED] Use new agent endpoint for normal chat
   const requestBody = {
     prompt,
     stream: true,
+    run_id: runId,
   };
 
   const requestOptions = {
@@ -110,6 +116,45 @@ export const submitInput = async (value: string) => {
   }
 
   throw new Error(lastError || 'Input submit failed on all known endpoints');
+};
+
+export const pauseRun = async (runId: string) => {
+  const response = await fetch(
+    `/api/agent/runs/${encodeURIComponent(runId)}/pause`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Pause failed with status ${response.status}`);
+  }
+
+  return response.json();
+};
+
+export const resumeRun = async (runId: string, value: string) => {
+  const response = await fetch(
+    `/api/agent/runs/${encodeURIComponent(runId)}/resume`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ value }),
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Resume failed with status ${response.status}`);
+  }
+
+  return response.json();
 };
 
 export const submitEditorConfirm = async (sourcePath: string, data: any) => {

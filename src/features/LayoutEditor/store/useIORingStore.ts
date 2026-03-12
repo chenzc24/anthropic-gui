@@ -632,12 +632,17 @@ interface HistoryState {
   future: IntentGraph[];
 }
 
+interface ClipboardPayload {
+  instances: Instance[];
+  sourceSelectionIds: string[];
+}
+
 interface IORingState {
   // Data
   graph: IntentGraph;
   selectedId: string | null;
   selectedIds: string[];
-  clipboard: Instance | null;
+  clipboard: ClipboardPayload | null;
   editorSourcePath: string | null;
   editorProcessNode: string | null;
 
@@ -659,9 +664,11 @@ interface IORingState {
 
   // Renamed from reorderInstance and enhanced
   moveInstance: (id: string, newSide: Side, newOrder: number) => void;
+  moveInstances: (ids: string[], newSide: Side, newOrder: number) => void;
   moveCornerInstance: (id: string, location: CornerLocation) => void;
 
   copyInstance: (id: string) => void;
+  copySelection: (ids?: string[]) => void;
   pasteInstance: (targetSide?: Side) => void;
 
   updateRingConfig: (config: Partial<IntentGraph['ring_config']>) => void;
@@ -881,6 +888,89 @@ export const useIORingStore = create<IORingState>((set, get) => {
       }
     },
 
+    moveInstances: (ids, newSide, newOrder) => {
+      const deduped = Array.from(new Set(ids));
+      if (deduped.length === 0) return;
+
+      const { graph } = get();
+      const selectedSet = new Set(deduped);
+      const movable = graph.instances.filter(inst => selectedSet.has(inst.id));
+
+      if (movable.length === 0) return;
+
+      pushHistory();
+
+      const placementOrder = getPlacementOrder(graph);
+      const sideSet: Side[] = ['top', 'right', 'bottom', 'left'];
+
+      const sortedMovable = movable.slice().sort((a, b) => {
+        if (a.side === b.side) {
+          return Number(a.order || 0) - Number(b.order || 0);
+        }
+
+        const sidePriority: Record<Side, number> = {
+          top: 0,
+          right: 1,
+          bottom: 2,
+          left: 3,
+        };
+
+        return sidePriority[a.side as Side] - sidePriority[b.side as Side];
+      });
+
+      const destinationWithoutSelection = getSideVisualInstances(
+        graph,
+        newSide,
+      ).filter(inst => !selectedSet.has(inst.id));
+
+      const insertIndex = Math.max(
+        0,
+        Math.min(newOrder, destinationWithoutSelection.length),
+      );
+
+      const movedWithNewSide = sortedMovable.map(inst => ({
+        ...inst,
+        side: newSide,
+      }));
+
+      const destinationVisual = [...destinationWithoutSelection];
+      destinationVisual.splice(insertIndex, 0, ...movedWithNewSide);
+
+      const updatedMap = new Map<string, Instance>();
+
+      sideSet.forEach(side => {
+        const visualForSide =
+          side === newSide
+            ? destinationVisual
+            : getSideVisualInstances(graph, side).filter(
+                inst => !selectedSet.has(inst.id),
+              );
+
+        const updatedSide = applySideOrderFromVisual(
+          side,
+          visualForSide,
+          placementOrder,
+        );
+
+        updatedSide.forEach(inst => {
+          updatedMap.set(inst.id, inst);
+        });
+      });
+
+      set({
+        graph: withDerivedRingConfig(
+          normalizeGraphInstances({
+            ...graph,
+            instances: graph.instances.map(
+              inst => updatedMap.get(inst.id) || inst,
+            ),
+          }),
+        ),
+        selectedId: deduped[deduped.length - 1] || null,
+        selectedIds: deduped,
+      });
+    },
+
     moveCornerInstance: (id, location) => {
       pushHistory();
       const { graph } = get();
@@ -924,109 +1014,153 @@ export const useIORingStore = create<IORingState>((set, get) => {
       const { graph } = get();
       const instance = graph.instances.find((i: Instance) => i.id === id);
       if (instance) {
-        set({ clipboard: { ...instance } });
+        set({
+          clipboard: {
+            instances: [{ ...instance, meta: { ...(instance.meta || {}) } }],
+            sourceSelectionIds: [id],
+          },
+        });
       }
+    },
+
+    copySelection: ids => {
+      const { graph, selectedIds, selectedId } = get();
+      const requested = ids && ids.length > 0 ? ids : selectedIds;
+      const fallback =
+        requested.length > 0 ? requested : selectedId ? [selectedId] : [];
+      if (fallback.length === 0) return;
+
+      const byId = new Map(graph.instances.map(inst => [inst.id, inst]));
+      const copiedInstances = fallback
+        .map(id => byId.get(id))
+        .filter((inst): inst is Instance => !!inst)
+        .map(inst => ({ ...inst, meta: { ...(inst.meta || {}) } }));
+
+      if (copiedInstances.length === 0) {
+        return;
+      }
+
+      set({
+        clipboard: {
+          instances: copiedInstances,
+          sourceSelectionIds: fallback,
+        },
+      });
     },
 
     pasteInstance: targetSide => {
       const { clipboard, graph, selectedId } = get();
-      if (!clipboard) return;
-
-      pushHistory();
+      if (!clipboard || clipboard.instances.length === 0) return;
 
       const selectedInstance = selectedId
         ? graph.instances.find((inst: Instance) => inst.id === selectedId)
         : null;
 
-      const clipboardIsCorner =
-        (clipboard.side as string) === 'corner' ||
-        String(clipboard.type || '').toLowerCase() === 'corner' ||
-        String(clipboard.device || '')
-          .toUpperCase()
-          .includes('CORNER');
+      const clipboardCorners = clipboard.instances.filter(
+        inst =>
+          (inst.side as string) === 'corner' ||
+          String(inst.type || '').toLowerCase() === 'corner' ||
+          String(inst.device || '')
+            .toUpperCase()
+            .includes('CORNER'),
+      );
+      const clipboardLinear = clipboard.instances.filter(
+        inst => !clipboardCorners.some(cornerInst => cornerInst.id === inst.id),
+      );
 
-      if (clipboardIsCorner) {
-        const emptyLocation = getFirstEmptyCornerLocation(graph);
+      if (clipboardCorners.length === 0 && clipboardLinear.length === 0) {
+        return;
+      }
+
+      pushHistory();
+
+      let workingGraph = graph;
+      const pastedIds: string[] = [];
+
+      const sideToUse =
+        targetSide ||
+        ((selectedInstance && (selectedInstance.side as string) !== 'corner'
+          ? selectedInstance.side
+          : clipboardLinear[0]?.side || 'top') as Side);
+
+      if (clipboardLinear.length > 0) {
+        const sideInstances = getSideVisualInstances(workingGraph, sideToUse);
+
+        let insertIndex = sideInstances.length;
+        if (
+          selectedInstance &&
+          selectedInstance.side === sideToUse &&
+          (selectedInstance.side as string) !== 'corner'
+        ) {
+          const selectedIndex = sideInstances.findIndex(
+            inst => inst.id === selectedInstance.id,
+          );
+          if (selectedIndex >= 0) {
+            insertIndex = selectedIndex + 1;
+          }
+        }
+
+        const newInstances: Instance[] = clipboardLinear.map(inst => ({
+          ...inst,
+          id: generateId(),
+          side: sideToUse,
+          order: 1,
+          meta: { ...(inst.meta || {}) },
+        }));
+
+        const newVisual = [...sideInstances];
+        newVisual.splice(insertIndex, 0, ...newInstances);
+        const placementOrder = getPlacementOrder(workingGraph);
+        const updatedSide = applySideOrderFromVisual(
+          sideToUse,
+          newVisual,
+          placementOrder,
+        );
+        const updatedMap = new Map(updatedSide.map(i => [i.id, i]));
+
+        workingGraph = {
+          ...workingGraph,
+          instances: [...workingGraph.instances, ...newInstances].map(
+            inst => updatedMap.get(inst.id) || inst,
+          ),
+        };
+
+        pastedIds.push(...newInstances.map(inst => inst.id));
+      }
+
+      clipboardCorners.forEach(cornerClipboard => {
+        const emptyLocation = getFirstEmptyCornerLocation(workingGraph);
         if (!emptyLocation) {
           return;
         }
 
         const cornerInstance: Instance = withCornerLocation(
           {
-            ...clipboard,
+            ...cornerClipboard,
             id: generateId(),
             type: 'corner',
-            device: clipboard.device || 'PCORNER',
+            device: cornerClipboard.device || 'PCORNER',
             order: 1,
-            meta: { ...(clipboard.meta || {}) },
+            meta: { ...(cornerClipboard.meta || {}) },
           } as Instance,
           emptyLocation,
         );
 
-        set({
-          graph: withDerivedRingConfig(
-            normalizeGraphInstances({
-              ...graph,
-              instances: [...graph.instances, cornerInstance],
-            }),
-          ),
-          selectedId: cornerInstance.id,
-          selectedIds: [cornerInstance.id],
-        });
+        workingGraph = {
+          ...workingGraph,
+          instances: [...workingGraph.instances, cornerInstance],
+        };
+        pastedIds.push(cornerInstance.id);
+      });
+
+      if (pastedIds.length === 0) {
         return;
       }
 
-      const sideToUse =
-        targetSide ||
-        ((selectedInstance && (selectedInstance.side as string) !== 'corner'
-          ? selectedInstance.side
-          : clipboard.side || 'top') as Side);
-
-      const sideInstances = getSideVisualInstances(graph, sideToUse);
-
-      let insertIndex = sideInstances.length;
-      if (
-        selectedInstance &&
-        selectedInstance.side === sideToUse &&
-        (selectedInstance.side as string) !== 'corner'
-      ) {
-        const selectedIndex = sideInstances.findIndex(
-          inst => inst.id === selectedInstance.id,
-        );
-        if (selectedIndex >= 0) {
-          insertIndex = selectedIndex + 1;
-        }
-      }
-
-      const newInstance: Instance = {
-        ...clipboard,
-        id: generateId(),
-        side: sideToUse,
-        order: 1,
-        meta: { ...(clipboard.meta || {}) },
-      };
-
-      const newVisual = [...sideInstances];
-      newVisual.splice(insertIndex, 0, newInstance);
-      const placementOrder = getPlacementOrder(graph);
-      const updatedSide = applySideOrderFromVisual(
-        sideToUse,
-        newVisual,
-        placementOrder,
-      );
-      const updatedMap = new Map(updatedSide.map(i => [i.id, i]));
-
       set({
-        graph: withDerivedRingConfig(
-          normalizeGraphInstances({
-            ...graph,
-            instances: [...graph.instances, newInstance].map(
-              inst => updatedMap.get(inst.id) || inst,
-            ),
-          }),
-        ),
-        selectedId: newInstance.id,
-        selectedIds: [newInstance.id],
+        graph: withDerivedRingConfig(normalizeGraphInstances(workingGraph)),
+        selectedId: pastedIds[pastedIds.length - 1] || null,
+        selectedIds: pastedIds,
       });
     },
 

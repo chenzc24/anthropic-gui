@@ -2,8 +2,10 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 export interface AgentStreamState {
   activeChatId: string | null;
+  runId: string | null;
   isStreaming: boolean;
   isLoading: boolean;
+  isPaused: boolean;
   isWaitingForInput: boolean;
   inputPrompt: string;
   updatingAiPromptId: string;
@@ -11,8 +13,10 @@ export interface AgentStreamState {
 
 const initialState: AgentStreamState = {
   activeChatId: null,
+  runId: null,
   isStreaming: false,
   isLoading: false,
+  isPaused: false,
   isWaitingForInput: false,
   inputPrompt: '',
   updatingAiPromptId: '',

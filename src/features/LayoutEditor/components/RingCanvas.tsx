@@ -77,6 +77,94 @@ const T28_DEVICE_COLORS: Record<string, string> = {
   PRCUTA_G: '#A0A0A0',
 };
 
+const T180_DEVICE_COLORS: Record<string, string> = {
+  PAD70LU_TRL: '#FFD700',
+  PVDD1CDG: '#32CD32',
+  PVSS1CDG: '#228B22',
+  PVDD2CDG: '#90EE90',
+  PVSS2CDG: '#228B22',
+  PVDD1ANA: '#4A90E2',
+  PVSS1ANA: '#3A80D2',
+  PVDD2ANA: '#5BA0F2',
+  PVSS2ANA: '#3A80D2',
+  PCORNER: '#FF6B6B',
+  PFILLER10: '#C0C0C0',
+  PFILLER20: '#C0C0C0',
+  blank: '#FF0000',
+};
+
+type LegendGroup = {
+  title: string;
+  items: Array<{ label: string; color: string }>;
+};
+
+const T28_LEGEND_GROUPS: LegendGroup[] = [
+  {
+    title: 'Analog IO (Blue)',
+    items: [
+      { label: 'PDB3AC', color: '#4A90E2' },
+      { label: 'PVDD1AC', color: '#5BA0F2' },
+      { label: 'PVSS1AC', color: '#3A80D2' },
+      { label: 'PVDD3AC', color: '#87CEEB' },
+      { label: 'PVSS3AC', color: '#4682B4' },
+      { label: 'PVDD3A', color: '#7EC8E3' },
+      { label: 'PVSS3A', color: '#3E7AB0' },
+    ],
+  },
+  {
+    title: 'Digital IO (Green)',
+    items: [
+      { label: 'PDDW16SDGZ', color: '#32CD32' },
+      { label: 'PVDD1DGZ', color: '#90EE90' },
+      { label: 'PVDD2POC', color: '#90EE90' },
+      { label: 'PVSS1DGZ', color: '#228B22' },
+      { label: 'PVSS2DGZ', color: '#228B22' },
+    ],
+  },
+  {
+    title: 'Corners / Fillers',
+    items: [
+      { label: 'PCORNERA_G', color: '#FF6B6B' },
+      { label: 'PCORNER_G', color: '#FF8888' },
+      { label: 'PFILLER10A_G', color: '#D8D8D8' },
+      { label: 'PFILLER20A_G', color: '#D8D8D8' },
+      { label: 'PFILLER10_G', color: '#C0C0C0' },
+      { label: 'PFILLER20_G', color: '#C0C0C0' },
+      { label: 'PRCUTA_G', color: '#A0A0A0' },
+    ],
+  },
+];
+
+const T180_LEGEND_GROUPS: LegendGroup[] = [
+  {
+    title: 'Digital IO (Green)',
+    items: [
+      { label: 'PVDD1CDG', color: '#32CD32' },
+      { label: 'PVSS1CDG', color: '#228B22' },
+      { label: 'PVDD2CDG', color: '#90EE90' },
+      { label: 'PVSS2CDG', color: '#228B22' },
+    ],
+  },
+  {
+    title: 'Analog IO (Blue)',
+    items: [
+      { label: 'PVDD1ANA', color: '#4A90E2' },
+      { label: 'PVSS1ANA', color: '#3A80D2' },
+      { label: 'PVDD2ANA', color: '#5BA0F2' },
+      { label: 'PVSS2ANA', color: '#3A80D2' },
+    ],
+  },
+  {
+    title: 'Corners / Fillers',
+    items: [
+      { label: 'PCORNER', color: '#FF6B6B' },
+      { label: 'PFILLER10', color: '#C0C0C0' },
+      { label: 'PFILLER20', color: '#C0C0C0' },
+      { label: 'blank', color: '#FF0000' },
+    ],
+  },
+];
+
 export const RingCanvas: React.FC = () => {
   const {
     graph,
@@ -86,8 +174,10 @@ export const RingCanvas: React.FC = () => {
     selectedId,
     selectedIds,
     moveInstance,
+    moveInstances,
     moveCornerInstance,
     copyInstance,
+    copySelection,
     pasteInstance,
     deleteInstances,
   } = useIORingStore();
@@ -98,6 +188,9 @@ export const RingCanvas: React.FC = () => {
     height: DEFAULT_CANVAS_HEIGHT,
   });
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [draggingSelectionIds, setDraggingSelectionIds] = useState<string[]>(
+    [],
+  );
   const [viewScale, setViewScale] = useState(1);
   const [viewOffset, setViewOffset] = useState({ x: 0, y: 0 });
   const [selectionBox, setSelectionBox] = useState<{
@@ -139,6 +232,7 @@ export const RingCanvas: React.FC = () => {
     graph?.ring_config?.process_node || '',
   ).toUpperCase();
   const isT28Node = ringProcessNode.includes('28');
+  const isT180Node = ringProcessNode.includes('180') || !isT28Node;
 
   const ringPadW = Number(graph?.ring_config?.pad_width || 0);
   const ringPadH = Number(graph?.ring_config?.pad_height || 0);
@@ -221,14 +315,6 @@ export const RingCanvas: React.FC = () => {
       return 'transparent';
     }
 
-    if (metadata.colors?.[device]) {
-      return metadata.colors[device];
-    }
-
-    if (metadata.colors?.[upperDevice]) {
-      return metadata.colors[upperDevice];
-    }
-
     if (isT28Node) {
       if (T28_DEVICE_COLORS[upperDevice]) {
         return T28_DEVICE_COLORS[upperDevice];
@@ -240,6 +326,27 @@ export const RingCanvas: React.FC = () => {
       if (t28Prefix) {
         return t28Prefix[1];
       }
+    }
+
+    if (isT180Node) {
+      if (T180_DEVICE_COLORS[upperDevice]) {
+        return T180_DEVICE_COLORS[upperDevice];
+      }
+
+      const t180Prefix = Object.entries(T180_DEVICE_COLORS).find(([key]) =>
+        upperDevice.startsWith(key.toUpperCase()),
+      );
+      if (t180Prefix) {
+        return t180Prefix[1];
+      }
+    }
+
+    if (metadata.colors?.[device]) {
+      return metadata.colors[device];
+    }
+
+    if (metadata.colors?.[upperDevice]) {
+      return metadata.colors[upperDevice];
     }
 
     if (upperDevice.includes('CORNER') || upperDevice === 'PCORNER') {
@@ -277,6 +384,11 @@ export const RingCanvas: React.FC = () => {
 
     return metadata.colors?.default || '#CCCCCC';
   };
+
+  const legendGroups = useMemo(
+    () => (isT28Node ? T28_LEGEND_GROUPS : T180_LEGEND_GROUPS),
+    [isT28Node],
+  );
 
   const getInstanceThickness = useCallback(
     (inst: Instance) => {
@@ -353,6 +465,20 @@ export const RingCanvas: React.FC = () => {
     return `${signalName}:${inst.device || 'UNKNOWN'}`;
   };
 
+  const blurActiveEditorField = useCallback(() => {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active) return;
+
+    if (
+      active.tagName === 'INPUT' ||
+      active.tagName === 'TEXTAREA' ||
+      active.tagName === 'SELECT' ||
+      active.isContentEditable
+    ) {
+      active.blur();
+    }
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if input/textarea is focused, unless it is the canvas itself (which doesn't focus really)
@@ -368,7 +494,9 @@ export const RingCanvas: React.FC = () => {
 
       // Copy: Ctrl+C
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
-        if (selectedId) {
+        if (selectedIds.length > 0) {
+          copySelection(selectedIds);
+        } else if (selectedId) {
           copyInstance(selectedId);
         }
       }
@@ -397,6 +525,7 @@ export const RingCanvas: React.FC = () => {
     selectedIds,
     graph,
     copyInstance,
+    copySelection,
     pasteInstance,
     deleteInstances,
   ]);
@@ -705,9 +834,20 @@ export const RingCanvas: React.FC = () => {
 
     return (
       <g
+        onMouseDown={e => {
+          if (e.button !== 0) return;
+          blurActiveEditorField();
+          e.preventDefault();
+          e.stopPropagation();
+          const additive = e.ctrlKey || e.metaKey;
+          selectInstance(inst.id, additive);
+          if (!additive) {
+            setDraggingId(inst.id);
+            setDraggingSelectionIds([inst.id]);
+          }
+        }}
         onClick={e => {
           e.stopPropagation();
-          selectInstance(inst.id, e.ctrlKey || e.metaKey);
         }}
         className="cursor-pointer hover:opacity-90"
       >
@@ -762,6 +902,12 @@ export const RingCanvas: React.FC = () => {
     if (!draggingId || !svgRef.current) return;
     const instance = graph.instances.find(i => i.id === draggingId);
     if (!instance) return;
+
+    const activeDragIds =
+      draggingSelectionIds.length > 0 &&
+      draggingSelectionIds.includes(draggingId)
+        ? draggingSelectionIds
+        : [draggingId];
 
     const world = screenToWorld(e.clientX, e.clientY);
     const mx = world.x;
@@ -835,7 +981,8 @@ export const RingCanvas: React.FC = () => {
     }
 
     const sideInsts = sides[closestSide];
-    const filteredSideInsts = sideInsts.filter(inst => inst.id !== draggingId);
+    const dragSet = new Set(activeDragIds);
+    const filteredSideInsts = sideInsts.filter(inst => !dragSet.has(inst.id));
 
     let trackPos = 0;
     if (closestSide === 'top' || closestSide === 'bottom') {
@@ -860,8 +1007,14 @@ export const RingCanvas: React.FC = () => {
 
     const oldSide = instance.side as Side;
     const oldIndex = sideInsts.findIndex(inst => inst.id === draggingId);
+    const isGroupDrag = activeDragIds.length > 1;
+
     if (closestSide !== oldSide || newIndex !== oldIndex) {
-      moveInstance(instance.id, closestSide, newIndex);
+      if (isGroupDrag) {
+        moveInstances(activeDragIds, closestSide, newIndex);
+      } else {
+        moveInstance(instance.id, closestSide, newIndex);
+      }
     }
   };
 
@@ -896,6 +1049,7 @@ export const RingCanvas: React.FC = () => {
 
     setPanState(null);
     setDraggingId(null);
+    setDraggingSelectionIds([]);
   };
 
   const handleWheel = useCallback(
@@ -936,7 +1090,7 @@ export const RingCanvas: React.FC = () => {
   return (
     <div
       ref={containerRef}
-      className="flex-1 min-w-0 min-h-0 bg-gray-50 flex items-stretch justify-start overflow-hidden pl-5 pr-3 py-0"
+      className="flex-1 min-w-0 min-h-0 bg-gray-50 flex items-stretch justify-start overflow-hidden pl-5 pr-3 py-0 relative"
     >
       <svg
         ref={svgRef}
@@ -945,6 +1099,7 @@ export const RingCanvas: React.FC = () => {
         className="bg-white shadow-xl rounded-lg select-none"
         onMouseDown={e => {
           if (e.target === e.currentTarget) {
+            blurActiveEditorField();
             if (e.button === 1) {
               e.preventDefault();
               setPanState({
@@ -1067,12 +1222,18 @@ export const RingCanvas: React.FC = () => {
                     }}
                     onMouseDown={e => {
                       if (e.button !== 0) return;
+                      blurActiveEditorField();
                       e.preventDefault();
                       e.stopPropagation();
                       const additive = e.ctrlKey || e.metaKey;
+                      const hasCurrentSelection = selectedIds.includes(inst.id);
+                      const dragIds = hasCurrentSelection
+                        ? selectedIds
+                        : [inst.id];
                       selectInstance(inst.id, additive);
                       if (!additive) {
                         setDraggingId(inst.id);
+                        setDraggingSelectionIds(dragIds);
                       }
                     }}
                     className={clsx(
@@ -1136,6 +1297,37 @@ export const RingCanvas: React.FC = () => {
           )}
         </g>
       </svg>
+
+      <div className="absolute top-3 right-3 w-64 max-h-[calc(100%-1.5rem)] overflow-y-auto rounded-lg border border-gray-200 bg-white/95 shadow-lg p-3">
+        <div className="text-xs font-semibold text-gray-700 mb-2">
+          Color Legend ({isT28Node ? 'T28' : 'T180'})
+        </div>
+        <div className="space-y-3">
+          {legendGroups.map(group => (
+            <div key={group.title}>
+              <div className="text-[11px] font-medium text-gray-600 mb-1">
+                {group.title}
+              </div>
+              <div className="space-y-1">
+                {group.items.map(item => (
+                  <div
+                    key={`${group.title}-${item.label}`}
+                    className="flex items-center gap-2"
+                  >
+                    <span
+                      className="inline-block w-3 h-3 rounded-sm border border-gray-400"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <span className="text-[11px] text-gray-700 font-mono leading-tight">
+                      {item.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 };

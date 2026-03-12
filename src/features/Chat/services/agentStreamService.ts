@@ -1,6 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 
-import { submitInput, submitPrompt } from '@/api/prompt.api';
+import {
+  pauseRun,
+  resumeRun,
+  submitInput,
+  submitPrompt,
+} from '@/api/prompt.api';
 import { ROUTES } from '@/app/router/constants/routes';
 import {
   resetAgentStreamState,
@@ -212,12 +217,17 @@ export const startAgentStream = async ({
 
   isGenerating = true;
   const runId = ++streamRunId;
+  const backendRunId = uuidv4();
 
   store.dispatch(
     setAgentStreamState({
       activeChatId: chatId,
+      runId: backendRunId,
       isLoading: true,
       isStreaming: false,
+      isPaused: false,
+      isWaitingForInput: false,
+      inputPrompt: '',
     }),
   );
 
@@ -238,6 +248,7 @@ export const startAgentStream = async ({
       temperature: 0,
       topK: 0,
       topP: 0,
+      runId: backendRunId,
     });
 
     if (!response?.ok) {
@@ -255,6 +266,7 @@ export const startAgentStream = async ({
       setAgentStreamState({
         isStreaming: true,
         isLoading: false,
+        isPaused: false,
       }),
     );
 
@@ -394,6 +406,41 @@ export const startAgentStream = async ({
           const eventData = JSON.parse(jsonStr);
           const { type, content } = eventData;
 
+          if (type === 'run_started') {
+            const eventRunId =
+              content && typeof content.run_id === 'string'
+                ? content.run_id
+                : backendRunId;
+            store.dispatch(
+              setAgentStreamState({
+                runId: eventRunId,
+              }),
+            );
+            continue;
+          }
+
+          if (type === 'paused') {
+            store.dispatch(
+              setAgentStreamState({
+                isPaused: true,
+                isStreaming: false,
+                isLoading: false,
+              }),
+            );
+            continue;
+          }
+
+          if (type === 'resumed') {
+            store.dispatch(
+              setAgentStreamState({
+                isPaused: false,
+                isStreaming: true,
+                isLoading: false,
+              }),
+            );
+            continue;
+          }
+
           if (
             pendingNewAssistantBlock &&
             ['final_answer_delta', 'agent_thought'].includes(type)
@@ -426,6 +473,7 @@ export const startAgentStream = async ({
               setAgentStreamState({
                 isWaitingForInput: true,
                 inputPrompt: content.prompt,
+                isPaused: false,
                 isLoading: false,
                 isStreaming: false,
               }),
@@ -732,6 +780,7 @@ export const startAgentStream = async ({
         setAgentStreamState({
           isLoading: false,
           isStreaming: false,
+          isPaused: false,
         }),
       );
       isGenerating = false;
@@ -740,13 +789,43 @@ export const startAgentStream = async ({
 };
 
 export const submitAgentInput = async (value: string) => {
+  const streamState = store.getState().agentStream;
+  if (streamState.isPaused && streamState.runId) {
+    await resumeRun(streamState.runId, value);
+    store.dispatch(
+      setAgentStreamState({
+        isPaused: false,
+        isLoading: false,
+        isStreaming: true,
+      }),
+    );
+    return;
+  }
+
   await submitInput(value);
   store.dispatch(
     setAgentStreamState({
       isWaitingForInput: false,
       inputPrompt: '',
+      isPaused: false,
       isLoading: true,
       isStreaming: true,
+    }),
+  );
+};
+
+export const pauseAgentStream = async () => {
+  const streamState = store.getState().agentStream;
+  if (!streamState.runId) {
+    return;
+  }
+
+  await pauseRun(streamState.runId);
+  store.dispatch(
+    setAgentStreamState({
+      isPaused: true,
+      isLoading: false,
+      isStreaming: false,
     }),
   );
 };

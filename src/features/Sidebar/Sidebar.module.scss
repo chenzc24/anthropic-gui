@@ -7,6 +7,35 @@
   overflow-y: hidden;
   height: 100vh;
 
+  .topRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .logoWrap {
+    min-width: 0;
+  }
+
+  .collapseBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+
+    &:hover {
+      border-color: var(--border-primary);
+    }
+  }
+
   .bottomItems {
     margin-top: auto;
     display: flex;
@@ -47,6 +76,56 @@
 
     &:hover {
       border-color: var(--border-primary);
+    }
+  }
+
+  .iconActionBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 13px 11px;
+    background-color: var(--bg-primary);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--text-primary);
+    height: 100%;
+    transition: border-color 0.2s ease;
+
+    &:hover {
+      border-color: var(--border-primary);
+    }
+  }
+
+  &.collapsed {
+    padding: 18px 12px;
+
+    .logoWrap {
+      display: none;
+    }
+
+    .topRow {
+      justify-content: center;
+    }
+
+    .editorBtn {
+      min-width: 0;
+      width: 100%;
+      justify-content: center;
+      padding-left: 0;
+      padding-right: 0;
+    }
+
+    .actionsRow {
+      justify-content: center;
+    }
+
+    .settingsBtn,
+    .iconActionBtn {
+      width: 100%;
+      justify-content: center;
+      padding-left: 0;
+      padding-right: 0;
     }
   }
 }

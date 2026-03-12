@@ -64,6 +64,55 @@ yarn start:prod
 
 4. Enter your API key to use the app.
 
+## Project Structure
+
+```text
+anthropic-gui/
+├── package.json                      # Project scripts and dependencies
+├── tsconfig.json                     # TypeScript compiler options
+├── tailwind.config.js                # Tailwind CSS configuration
+├── config-overrides.js               # CRA override configuration
+├── public/
+│   ├── index.html                    # App HTML template
+│   ├── electron.js                   # Electron bootstrap
+│   └── icons/                        # Packaging icons
+├── src/
+│   ├── index.tsx                     # React app entry
+│   ├── app/
+│   │   ├── App.tsx                   # Root app component
+│   │   └── router/                   # Route definitions
+│   ├── api/                          # API client modules
+│   ├── features/                     # Feature modules
+│   │   ├── ApiSettings/
+│   │   ├── Chat/
+│   │   │   ├── components/
+│   │   │   └── services/
+│   │   ├── Conversations/
+│   │   │   └── components/
+│   │   ├── LayoutEditor/
+│   │   │   ├── components/
+│   │   │   ├── store/
+│   │   │   ├── types/
+│   │   │   └── utils/
+│   │   └── Sidebar/
+│   ├── components/                   # Shared reusable components
+│   │   ├── FileBrowser/
+│   │   ├── Logo/
+│   │   ├── Logout/
+│   │   ├── PortalAwareItem/
+│   │   └── ThemeSwitcher/
+│   ├── ui/                           # Base UI primitives
+│   ├── pages/                        # Top-level pages
+│   ├── redux/                        # Global state and slices
+│   ├── theme/                        # Theme provider and palette
+│   ├── hooks/                        # Custom React hooks
+│   ├── helpers/                      # Shared helpers
+│   ├── assets/                       # Fonts, icons, styles
+│   └── typings/                      # Project typings
+├── build/                            # Production build output
+└── node_modules/                     # Installed dependencies
+```
+
 ## Build 🛠️
 
 To build the app run:

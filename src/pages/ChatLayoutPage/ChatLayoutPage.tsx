@@ -9,10 +9,21 @@ import styles from './ChatLayoutPage.module.scss';
 
 export const ChatLayoutPage = ({ children }: PropsWithChildren) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   return (
-    <div className={classNames(['app', styles.wrapper])}>
-      <Sidebar onOpenSettings={() => setIsSettingsOpen(true)} />
+    <div
+      className={classNames([
+        'app',
+        styles.wrapper,
+        isSidebarCollapsed && styles.collapsed,
+      ])}
+    >
+      <Sidebar
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
       {children}
       <ApiSettings
         open={isSettingsOpen}

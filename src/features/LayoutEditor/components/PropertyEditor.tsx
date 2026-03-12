@@ -624,6 +624,14 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     isPadBusinessInstance &&
     ((isT28 && isDigitalDevice) || (!isT28 && !isAnalogDomain));
 
+  if (isCornerInstance) {
+    ['name', 'device', 'type'].forEach(field => {
+      if (!keys.includes(field)) {
+        keys.push(field);
+      }
+    });
+  }
+
   if (!allowDomainField) {
     const idx = keys.indexOf('domain');
     if (idx >= 0) {

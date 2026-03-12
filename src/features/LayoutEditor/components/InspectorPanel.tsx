@@ -1,4 +1,10 @@
-import React from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { useIORingStore } from '../store/useIORingStore';
 import { Instance } from '../types';
@@ -8,15 +14,79 @@ import { PropertyEditor } from './PropertyEditor';
 export const InspectorPanel: React.FC = () => {
   const { graph, selectedId, selectedIds, updateInstance, updateRingConfig } =
     useIORingStore();
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const selectedInstance = selectedId
     ? graph.instances.find((i: Instance) => i.id === selectedId)
     : null;
 
+  const editorMode = selectedInstance
+    ? `instance:${selectedInstance.id}`
+    : 'global';
+  const sourceData = useMemo(
+    () => selectedInstance || graph.ring_config,
+    [graph.ring_config, selectedInstance],
+  );
+
+  const [draftData, setDraftData] = useState<any>(sourceData);
+  const [isDirty, setIsDirty] = useState(false);
+
+  useEffect(() => {
+    setDraftData(sourceData);
+    setIsDirty(false);
+  }, [editorMode, sourceData]);
+
+  const handleSave = useCallback(() => {
+    if (!isDirty) return;
+
+    if (selectedInstance) {
+      updateInstance(selectedInstance.id, draftData);
+    } else {
+      updateRingConfig(draftData);
+    }
+
+    setIsDirty(false);
+  }, [draftData, isDirty, selectedInstance, updateInstance, updateRingConfig]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!isDirty) return;
+
+      const target = event.target as Node | null;
+      if (!target) return;
+
+      if (panelRef.current?.contains(target)) {
+        return;
+      }
+
+      handleSave();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [handleSave, isDirty]);
+
   return (
-    <div className="w-80 border-r bg-white flex flex-col h-full min-h-0 shrink-0 overflow-hidden">
-      <div className="p-4 bg-gray-50 border-b font-medium text-gray-800">
-        Inspector
+    <div
+      ref={panelRef}
+      className="w-80 border-r bg-white flex flex-col h-full min-h-0 shrink-0 overflow-hidden"
+    >
+      <div className="p-4 bg-gray-50 border-b font-medium text-gray-800 flex items-center justify-between gap-3">
+        <span>Inspector</span>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!isDirty}
+          className={`px-3 py-1 rounded text-xs font-medium ${
+            isDirty
+              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+          }`}
+        >
+          Save
+        </button>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
@@ -38,10 +108,11 @@ export const InspectorPanel: React.FC = () => {
             </div>
 
             <PropertyEditor
-              data={selectedInstance}
-              onChange={(newData: any) =>
-                updateInstance(selectedInstance.id, newData)
-              }
+              data={draftData}
+              onChange={(newData: any) => {
+                setDraftData(newData);
+                setIsDirty(true);
+              }}
               readOnlyKeys={[]}
               ringConfig={graph.ring_config}
             />
@@ -58,8 +129,11 @@ export const InspectorPanel: React.FC = () => {
             </div>
 
             <PropertyEditor
-              data={graph.ring_config}
-              onChange={(newData: any) => updateRingConfig(newData)}
+              data={draftData}
+              onChange={(newData: any) => {
+                setDraftData(newData);
+                setIsDirty(true);
+              }}
               readOnlyKeys={[]}
               ringConfig={graph.ring_config}
             />
