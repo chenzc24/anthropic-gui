@@ -192,6 +192,21 @@ export const conversationsSlice = createSlice({
         content.mainText = (content.mainText || '') + textDelta;
       }
     },
+    setContentCompletionById: (
+      state,
+      action: PayloadAction<{
+        chatId: string;
+        contentId: string;
+        isComplete: boolean;
+      }>,
+    ) => {
+      const { chatId, contentId, isComplete } = action.payload;
+      const chat = findChatById(state.conversations, chatId);
+      const content = chat?.content?.find(c => c.id === contentId);
+      if (content) {
+        content.isComplete = isComplete;
+      }
+    },
     addDetailBlockToContent: (
       state,
       action: PayloadAction<{
@@ -316,6 +331,7 @@ export const {
   appendContentById,
   setMessageVersionById,
   appendMainTextById,
+  setContentCompletionById,
   addDetailBlockToContent,
   addHumanAttachmentsToContent,
   addStepToContent,

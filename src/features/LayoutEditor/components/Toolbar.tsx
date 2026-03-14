@@ -66,6 +66,9 @@ export const Toolbar: React.FC = () => {
   const handleExport = () => {
     // Use adapter to convert internal store format back to external format
     const externalGraph = exportAdapter(graph);
+    if (Array.isArray(externalGraph.layout_data)) {
+      delete externalGraph.instances;
+    }
 
     const dataStr =
       'data:text/json;charset=utf-8,' +

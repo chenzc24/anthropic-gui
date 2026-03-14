@@ -27,7 +27,13 @@ export interface ConversationCommon {
 
 export interface AgentStep {
   id?: string; // Unique ID for React rendering
-  type: 'agent_thought' | 'tool_call' | 'tool_result' | 'agent_error' | 'status' | 'files_generated';
+  type:
+    | 'agent_thought'
+    | 'tool_call'
+    | 'tool_result'
+    | 'agent_error'
+    | 'status'
+    | 'files_generated';
   content: string; // The text content or JSON string
   toolName?: string;
   toolArgs?: any;
@@ -77,6 +83,7 @@ export interface ChatContent {
   messageVersion?: 1 | 2;
   mainText?: string;
   details?: AssistantDetailBlock[];
+  isComplete?: boolean;
   humanAttachments?: ChatAttachment[];
 }
 
@@ -103,3 +110,72 @@ export type SensorContext = MutableRefObject<{
   items: FlattenedItem[];
   offset: number;
 }>;
+
+// Phase 0 chat-record contract (backend loading migration)
+export interface ChatRecordFileRef {
+  name: string;
+  path: string;
+  url: string;
+}
+
+export interface ChatRecordAttachment {
+  id: string;
+  name: string;
+  path: string;
+  url: string;
+  mimeType?: string;
+  category?: 'image' | 'text' | 'code' | 'csv' | 'json' | 'other';
+  size?: number;
+  timestamp: number;
+}
+
+export interface ChatRecordDetailBlock {
+  id: string;
+  type:
+    | 'agent_thought'
+    | 'tool_result'
+    | 'status'
+    | 'files_generated'
+    | 'agent_error'
+    | 'input_request';
+  content: string;
+  files?: ChatRecordFileRef[];
+  timestamp: number;
+}
+
+export interface ChatRecordAsset {
+  id: string;
+  name: string;
+  url: string;
+  type: 'image' | 'code' | 'json' | 'config' | 'il' | 'unknown';
+  timestamp: number;
+}
+
+export interface ChatRecordMessage {
+  id: string;
+  role: PromptType;
+  text: string;
+  mainText?: string;
+  isComplete?: boolean;
+  createdAt: number;
+  sequence: number;
+  details?: ChatRecordDetailBlock[];
+  assets?: ChatRecordAsset[];
+  attachments?: ChatRecordAttachment[];
+}
+
+export interface ChatSessionSummary {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+export interface ChatSessionDetail {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatRecordMessage[];
+}

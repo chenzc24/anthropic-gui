@@ -3,6 +3,11 @@ import { ChangeEvent, memo, useState } from 'react';
 import { InputAdornment, Menu, MenuItem, Popover } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 
+import {
+  deleteChatSession,
+  fetchChatSessions,
+  mapSessionSummariesToChatTree,
+} from '@/api/chatSessions.api';
 import { ROUTES } from '@/app/router/constants/routes';
 import { ChatsTree } from '@/features/Conversations/ChatsTree';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -10,8 +15,10 @@ import { selectCountConversations } from '@/redux/conversations/conversations.se
 import {
   clearConversations,
   saveFolder,
+  updateChatTree,
 } from '@/redux/conversations/conversationsSlice';
 import { useAppDispatch, useAppSelector } from '@/redux/hooks';
+import { TreeItem } from '@/typings/common';
 import { ButtonComponent } from '@/ui/ButtonComponent';
 import { IconComponent } from '@/ui/IconComponent';
 import { TextFieldComponent } from '@/ui/TextFieldComponent';
@@ -19,6 +26,24 @@ import { TextFieldComponent } from '@/ui/TextFieldComponent';
 import { ChatsTreeSearch } from './ChatsTreeSearch';
 
 import styles from './Conversations.module.scss';
+
+const collectChatIds = (items: TreeItem[]): string[] => {
+  const ids: string[] = [];
+
+  const walk = (nodes: TreeItem[]) => {
+    for (const node of nodes) {
+      if (node.type === 'chat') {
+        ids.push(node.id);
+      }
+      if (Array.isArray(node.children) && node.children.length) {
+        walk(node.children);
+      }
+    }
+  };
+
+  walk(items);
+  return ids;
+};
 
 export const Conversations = memo(() => {
   const [clearAnchorEl, setClearAnchorEl] = useState<null | HTMLElement>(null);
@@ -28,6 +53,7 @@ export const Conversations = memo(() => {
   const [searchedName, setSearchedName] = useState('');
   const debouncedSearch = useDebounce(searchedName, 500);
   const conversationLength = useAppSelector(selectCountConversations);
+  const conversations = useAppSelector(state => state.chats.conversations);
   const isClearConfirmOpen = Boolean(clearAnchorEl);
   const isAddMenuOpen = Boolean(menuAnchorEl);
 
@@ -47,8 +73,32 @@ export const Conversations = memo(() => {
     setSearchedName('');
   };
 
-  const onClearConfirm = () => {
-    dispatch(clearConversations());
+  const onClearConfirm = async () => {
+    const chatIds = collectChatIds(conversations);
+    if (chatIds.length === 0) {
+      setClearAnchorEl(null);
+      return;
+    }
+
+    const deleteResults = await Promise.allSettled(
+      chatIds.map(chatId => deleteChatSession(chatId)),
+    );
+
+    const hasFailure = deleteResults.some(item => item.status === 'rejected');
+    if (hasFailure) {
+      try {
+        const sessions = await fetchChatSessions();
+        dispatch(
+          updateChatTree({ chatTree: mapSessionSummariesToChatTree(sessions) }),
+        );
+      } catch (error) {
+        // Keep current UI state if reconciliation fetch fails.
+        void error;
+      }
+    } else {
+      dispatch(clearConversations());
+    }
+
     setClearAnchorEl(null);
   };
 

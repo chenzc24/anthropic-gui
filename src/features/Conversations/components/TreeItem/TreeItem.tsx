@@ -11,6 +11,7 @@ import classNames from 'classnames';
 import OutsideClickHandler from 'react-outside-click-handler';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
 
+import { deleteChatSession, renameChatSession } from '@/api/chatSessions.api';
 import { ROUTES } from '@/app/router/constants/routes';
 import { renameChatTreeItem } from '@/redux/conversations/conversationsSlice';
 import { useAppDispatch } from '@/redux/hooks';
@@ -86,7 +87,21 @@ const TreeItem = forwardRef<HTMLDivElement, Props>(
     const onConfirm = (event: MouseEvent) => {
       event.stopPropagation();
       if (isDeleting) {
-        onRemove?.();
+        if (type === 'chat') {
+          const runDelete = async () => {
+            try {
+              await deleteChatSession(value);
+              onRemove?.();
+            } catch (error) {
+              // eslint-disable-next-line no-console
+              console.error('Failed to delete chat session', error);
+            }
+          };
+
+          void runDelete();
+        } else {
+          onRemove?.();
+        }
         setIsDeleting(false);
       }
       if (isEditing) {
@@ -99,6 +114,25 @@ const TreeItem = forwardRef<HTMLDivElement, Props>(
               chatTreeName: trimmedName,
             }),
           );
+          if (type === 'chat') {
+            const originalName = name;
+            const runRename = async () => {
+              try {
+                await renameChatSession(value, trimmedName);
+              } catch (error) {
+                dispatch(
+                  renameChatTreeItem({
+                    chatTreeId: value,
+                    chatTreeName: originalName,
+                  }),
+                );
+                // eslint-disable-next-line no-console
+                console.error('Failed to rename chat session', error);
+              }
+            };
+
+            void runRename();
+          }
           setEditedItemName(trimmedName);
         }
         setIsEditing(false);

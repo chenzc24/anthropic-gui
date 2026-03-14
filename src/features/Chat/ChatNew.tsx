@@ -16,10 +16,18 @@ import { injectStyle } from 'react-toastify/dist/inject-style';
 import 'react-toastify/dist/ReactToastify.css';
 import { v4 as uuidv4 } from 'uuid';
 
+import {
+  appendChatSessionMessages,
+  createChatSession,
+  mapChatContentToRecordMessage,
+} from '@/api/chatSessions.api';
 import { uploadFile } from '@/api/files.api';
 import { NavigationContext } from '@/app/App';
 import { ROUTES } from '@/app/router/constants/routes';
-import { saveChat } from '@/redux/conversations/conversationsSlice';
+import {
+  deleteChatTreeItem,
+  saveChat,
+} from '@/redux/conversations/conversationsSlice';
 import { useAppDispatch } from '@/redux/hooks';
 import { ChatAttachment } from '@/typings/common';
 import { ButtonComponent } from '@/ui/ButtonComponent';
@@ -218,11 +226,26 @@ export const ChatNew: React.FC = () => {
     };
 
     dispatch(saveChat(newChat));
-    setComposerText('');
-    setComposerAttachments([]);
-    composerAttachmentsRef.current = [];
-    setDidNewChatNavigate(true);
-    navigate(`${ROUTES.Chat}/${newChat.id}`);
+    try {
+      await createChatSession({
+        id: newChat.id,
+        name: newChat.name,
+        createdAt: Date.now(),
+      });
+
+      await appendChatSessionMessages(newChat.id, [
+        mapChatContentToRecordMessage(newChat.content[0], 0),
+      ]);
+
+      setComposerText('');
+      setComposerAttachments([]);
+      composerAttachmentsRef.current = [];
+      setDidNewChatNavigate(true);
+      navigate(`${ROUTES.Chat}/${newChat.id}`);
+    } catch (error) {
+      dispatch(deleteChatTreeItem({ chatTreeId: newChat.id }));
+      toast.error(getErrorMessage(error));
+    }
   }, [composerText, dispatch, isUploading, setDidNewChatNavigate, navigate]);
 
   const onComposerKeyDown = useCallback(

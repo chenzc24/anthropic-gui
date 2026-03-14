@@ -658,6 +658,10 @@ interface IORingState {
   clearSelection: () => void;
 
   updateInstance: (id: string, partial: Partial<Instance>) => void;
+  updateInstancesPinConnection: (
+    ids: string[],
+    pinConnection: Record<string, { label: string }> | undefined,
+  ) => void;
   addInstance: (side: Side, type?: string) => void;
   deleteInstance: (id: string) => void;
   deleteInstances: (ids: string[]) => void;
@@ -803,6 +807,36 @@ export const useIORingStore = create<IORingState>((set, get) => {
           graph.ring_config,
           forceRebuild,
         );
+      });
+
+      set({
+        graph: withDerivedRingConfig(
+          normalizeGraphInstances({ ...graph, instances: newInstances }),
+        ),
+      });
+    },
+
+    updateInstancesPinConnection: (ids, pinConnection) => {
+      const targetIds = Array.from(new Set(ids));
+      if (targetIds.length === 0) return;
+
+      pushHistory();
+      const { graph } = get();
+      const targetSet = new Set(targetIds);
+
+      const newInstances = graph.instances.map((inst: Instance) => {
+        if (!targetSet.has(inst.id)) return inst;
+
+        const nextMeta = { ...(inst.meta || {}) };
+        delete nextMeta.pin_connection;
+
+        const nextInst = {
+          ...inst,
+          pin_connection: pinConnection,
+          meta: nextMeta,
+        } as Instance;
+
+        return withAutoPinConfig(nextInst, graph.ring_config);
       });
 
       set({

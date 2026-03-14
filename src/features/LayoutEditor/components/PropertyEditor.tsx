@@ -23,22 +23,27 @@ interface PinRow {
 const makePinRowId = () =>
   `pinrow_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-const parsePinConfigRows = (value: any): PinRow[] => {
+const parsePinConfigRows = (
+  value: any,
+  previousRows: PinRow[] = [],
+): PinRow[] => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return [];
   }
 
-  return Object.entries(value).map(([pinName, cfg]) => {
+  return Object.entries(value).map(([pinName, cfg], index) => {
+    const existingRowId = previousRows[index]?.rowId;
+
     if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
       return {
-        rowId: makePinRowId(),
+        rowId: existingRowId || makePinRowId(),
         pinName,
         label: String((cfg as Record<string, any>).label ?? ''),
       };
     }
 
     return {
-      rowId: makePinRowId(),
+      rowId: existingRowId || makePinRowId(),
       pinName,
       label: String(cfg ?? ''),
     };
@@ -160,7 +165,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     if (hasChipSize) {
       setChipSizeInput(`${data[widthKey]} * ${data[heightKey]}`);
     }
-    setPinRows(parsePinConfigRows(data?.pin_connection));
+    setPinRows(prevRows => parsePinConfigRows(data?.pin_connection, prevRows));
   }, [data, hasChipSize, widthKey, heightKey]);
 
   const handleChange = (key: string, value: any) => {
@@ -245,7 +250,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       };
 
       const setRowPinName = (index: number, pinName: string) => {
-        setPinRows(
+        updateRows(
           pinRows.map((row, i) =>
             i === index
               ? {
@@ -258,7 +263,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       };
 
       const setRowLabel = (index: number, label: string) => {
-        setPinRows(
+        updateRows(
           pinRows.map((row, i) =>
             i === index
               ? {

@@ -11,9 +11,90 @@ import { Instance } from '../types';
 
 import { PropertyEditor } from './PropertyEditor';
 
+const isPlainObject = (value: unknown): value is Record<string, any> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const normalizePinConnection = (
+  value: unknown,
+): Record<string, string> | null => {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+
+  const normalized: Record<string, string> = {};
+  Object.entries(value).forEach(([pin, entry]) => {
+    if (isPlainObject(entry)) {
+      normalized[pin] = String(entry.label ?? '');
+      return;
+    }
+
+    normalized[pin] = String(entry ?? '');
+  });
+
+  return normalized;
+};
+
+const pinConnectionsEqual = (left: unknown, right: unknown): boolean => {
+  const l = normalizePinConnection(left);
+  const r = normalizePinConnection(right);
+  if (!l && !r) return true;
+  if (!l || !r) return false;
+  return JSON.stringify(l) === JSON.stringify(r);
+};
+
+const pinListSignature = (value: unknown): string | null => {
+  const normalized = normalizePinConnection(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const keys = Object.keys(normalized).sort();
+  if (keys.length === 0) {
+    return null;
+  }
+
+  return JSON.stringify(keys);
+};
+
+const supportsPinBatch = (
+  inst: Instance | null | undefined,
+): inst is Instance => {
+  if (!inst) return false;
+
+  const type = String(inst.type || '').toLowerCase();
+  const device = String(inst.device || '').toUpperCase();
+
+  if (type === 'corner') return false;
+  if (
+    type === 'filler' ||
+    type === 'blank' ||
+    type === 'space' ||
+    type === 'cut'
+  ) {
+    return false;
+  }
+
+  if (
+    device.includes('CORNER') ||
+    device.includes('FILLER') ||
+    device.includes('RCUT') ||
+    device === 'BLANK'
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
 export const InspectorPanel: React.FC = () => {
-  const { graph, selectedId, selectedIds, updateInstance, updateRingConfig } =
-    useIORingStore();
+  const {
+    graph,
+    selectedId,
+    selectedIds,
+    updateInstance,
+    updateInstancesPinConnection,
+    updateRingConfig,
+  } = useIORingStore();
   const panelRef = useRef<HTMLDivElement>(null);
 
   const selectedInstance = selectedId
@@ -30,27 +111,95 @@ export const InspectorPanel: React.FC = () => {
 
   const [draftData, setDraftData] = useState<any>(sourceData);
   const [isDirty, setIsDirty] = useState(false);
+  const draftDataRef = useRef<any>(sourceData);
+  const isDirtyRef = useRef(false);
+
+  const compatiblePinBatchIds = useMemo(() => {
+    if (!supportsPinBatch(selectedInstance) || selectedIds.length <= 1) {
+      return [];
+    }
+
+    const targetPinSignature = pinListSignature(
+      selectedInstance.pin_connection,
+    );
+    if (!targetPinSignature) {
+      return [];
+    }
+
+    return selectedIds.filter(id => {
+      const inst = graph.instances.find(item => item.id === id) || null;
+      if (!supportsPinBatch(inst)) return false;
+
+      return pinListSignature(inst.pin_connection) === targetPinSignature;
+    });
+  }, [graph.instances, selectedIds, selectedInstance]);
 
   useEffect(() => {
     setDraftData(sourceData);
+    draftDataRef.current = sourceData;
     setIsDirty(false);
+    isDirtyRef.current = false;
   }, [editorMode, sourceData]);
 
+  useEffect(() => {
+    draftDataRef.current = draftData;
+  }, [draftData]);
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
   const handleSave = useCallback(() => {
-    if (!isDirty) return;
+    if (!isDirtyRef.current) return;
+
+    const currentDraft = draftDataRef.current;
 
     if (selectedInstance) {
-      updateInstance(selectedInstance.id, draftData);
+      const sourcePin = selectedInstance.pin_connection;
+      const draftPin = currentDraft?.pin_connection;
+      const pinChanged = !pinConnectionsEqual(sourcePin, draftPin);
+      const shouldBatchPin =
+        pinChanged &&
+        compatiblePinBatchIds.length > 1 &&
+        supportsPinBatch(selectedInstance);
+
+      if (shouldBatchPin) {
+        updateInstancesPinConnection(compatiblePinBatchIds, draftPin);
+      }
+
+      const nextDraftForActive = shouldBatchPin
+        ? {
+            ...currentDraft,
+            pin_connection: sourcePin,
+          }
+        : currentDraft;
+
+      const changedKeys = Object.keys(nextDraftForActive || {}).filter(
+        key =>
+          JSON.stringify(nextDraftForActive[key]) !==
+          JSON.stringify((selectedInstance as any)?.[key]),
+      );
+
+      if (changedKeys.length > 0) {
+        updateInstance(selectedInstance.id, nextDraftForActive);
+      }
     } else {
-      updateRingConfig(draftData);
+      updateRingConfig(currentDraft);
     }
 
     setIsDirty(false);
-  }, [draftData, isDirty, selectedInstance, updateInstance, updateRingConfig]);
+    isDirtyRef.current = false;
+  }, [
+    compatiblePinBatchIds,
+    selectedInstance,
+    updateInstance,
+    updateInstancesPinConnection,
+    updateRingConfig,
+  ]);
 
   useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!isDirty) return;
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      if (!isDirtyRef.current) return;
 
       const target = event.target as Node | null;
       if (!target) return;
@@ -59,14 +208,20 @@ export const InspectorPanel: React.FC = () => {
         return;
       }
 
-      handleSave();
+      window.setTimeout(() => {
+        handleSave();
+      }, 0);
     };
 
-    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('pointerdown', handleOutsidePointerDown, true);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener(
+        'pointerdown',
+        handleOutsidePointerDown,
+        true,
+      );
     };
-  }, [handleSave, isDirty]);
+  }, [handleSave]);
 
   return (
     <div
@@ -101,8 +256,10 @@ export const InspectorPanel: React.FC = () => {
               </h2>
               {selectedIds.length > 1 && (
                 <p className="mt-1 text-xs text-blue-600">
-                  Multi-selected: {selectedIds.length} instances (editing active
-                  one)
+                  Multi-selected: {selectedIds.length} instances
+                  {compatiblePinBatchIds.length > 1
+                    ? `, pin edits will apply to ${compatiblePinBatchIds.length} compatible instances`
+                    : ' (editing active one)'}
                 </p>
               )}
             </div>
@@ -111,7 +268,9 @@ export const InspectorPanel: React.FC = () => {
               data={draftData}
               onChange={(newData: any) => {
                 setDraftData(newData);
+                draftDataRef.current = newData;
                 setIsDirty(true);
+                isDirtyRef.current = true;
               }}
               readOnlyKeys={[]}
               ringConfig={graph.ring_config}
@@ -132,7 +291,9 @@ export const InspectorPanel: React.FC = () => {
               data={draftData}
               onChange={(newData: any) => {
                 setDraftData(newData);
+                draftDataRef.current = newData;
                 setIsDirty(true);
+                isDirtyRef.current = true;
               }}
               readOnlyKeys={[]}
               ringConfig={graph.ring_config}

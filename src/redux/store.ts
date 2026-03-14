@@ -10,7 +10,7 @@ import { themeSlice } from './theme/themeSlice';
 const persistConfig = {
   key: 'root',
   storage,
-  blacklist: ['agentStream'],
+  blacklist: ['agentStream', 'chats'],
 };
 
 const reducers = combineReducers({

@@ -1,6 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import {
+  appendChatSessionMessages,
+  mapChatContentToRecordMessage,
+} from '@/api/chatSessions.api';
+import {
   pauseRun,
   resumeRun,
   submitInput,
@@ -11,12 +15,14 @@ import {
   resetAgentStreamState,
   setAgentStreamState,
 } from '@/redux/agentStream/agentStream.slice';
+import { findChatById } from '@/redux/conversations/conversations.selectors';
 import {
   addAssetsToContent,
   addPromptToChat,
   appendContentById,
   appendMainTextById,
   addDetailBlockToContent,
+  setContentCompletionById,
 } from '@/redux/conversations/conversationsSlice';
 import { store } from '@/redux/store';
 import { ChatContent, ChatFile, AssistantDetailBlock } from '@/typings/common';
@@ -26,6 +32,7 @@ const IO_EDITOR_RETURN_KEY = 'io_editor_return_path';
 const IO_EDITOR_PENDING_UPDATED_EVENT = 'io-editor-pending-updated';
 const TOOL_EVENT_START_MARKER = '<<<AMS_TOOL_EVENT_V1>>>';
 const TOOL_EVENT_END_MARKER = '<<<AMS_TOOL_EVENT_END>>>';
+const STREAM_SYNC_INTERVAL_MS = 2000;
 
 const NARRATIVE_DELTA_REGEX =
   /^(Thought:|Observation:|Action:|Final Answer:|\*\*Generated Files:\*\*|\[Download\s|Config loaded successfully\.|The JSON structure seems|Validation passed\.|Schematic generation result:|Layout generation result:)/;
@@ -117,6 +124,29 @@ const selectPreferredIntermediateFile = (files: any[]) => {
   return candidates[0];
 };
 
+const getGeneratedFileIdentity = (file: any): string => {
+  if (typeof file?.path === 'string' && file.path.trim()) {
+    return file.path.trim().replace(/^\/+/, '');
+  }
+
+  if (typeof file?.url === 'string' && file.url.trim()) {
+    return file.url.trim().replace(/^\/+/, '');
+  }
+
+  if (typeof file?.name === 'string') {
+    return file.name.trim();
+  }
+
+  return '';
+};
+
+const getGeneratedFileVersionKey = (file: any): string => {
+  const identity = getGeneratedFileIdentity(file);
+  const mtimeNs = Number(file?.mtime_ns || 0);
+  const size = Number(file?.size || 0);
+  return `${identity}|${mtimeNs}|${size}`;
+};
+
 interface StructuredToolEventPayload {
   marker?: string;
   tool?: string;
@@ -194,6 +224,49 @@ let isGenerating = false;
 let streamRunId = 0;
 let navigateToEditor: (() => void) | null = null;
 
+const hasMeaningfulText = (value?: string): boolean => {
+  if (!value) return false;
+  const normalized = value.trim();
+  return !['', '{}', '[]', 'null', 'undefined', 'None'].includes(normalized);
+};
+
+const hasPersistableContent = (content: ChatContent): boolean => {
+  if (content.type === 'Human') {
+    const hasAttachments =
+      Array.isArray(content.humanAttachments) &&
+      content.humanAttachments.length > 0;
+    return hasMeaningfulText(content.text) || hasAttachments;
+  }
+
+  return (
+    hasMeaningfulText(content.text) ||
+    hasMeaningfulText(content.mainText) ||
+    (Array.isArray(content.details) && content.details.length > 0) ||
+    (Array.isArray(content.assets) && content.assets.length > 0)
+  );
+};
+
+const syncChatToBackend = async (chatId: string): Promise<void> => {
+  const state = store.getState();
+  const chat = findChatById(state.chats.conversations, chatId);
+  if (!chat || !Array.isArray(chat.content)) {
+    return;
+  }
+
+  const contents = chat.content;
+
+  const messages = contents
+    .map((content, sequence) => ({ content, sequence }))
+    .filter(item => hasPersistableContent(item.content))
+    .map(item => mapChatContentToRecordMessage(item.content, item.sequence));
+
+  if (messages.length === 0) {
+    return;
+  }
+
+  await appendChatSessionMessages(chatId, messages);
+};
+
 export const setEditorNavigationHandler = (handler: (() => void) | null) => {
   navigateToEditor = handler;
 };
@@ -238,6 +311,7 @@ export const startAgentStream = async ({
   abortController = new AbortController();
   const signal = abortController.signal;
   let assistantContentId = '';
+  let streamCompleted = false;
   try {
     const response = await submitPrompt({
       prompt,
@@ -249,6 +323,7 @@ export const startAgentStream = async ({
       topK: 0,
       topP: 0,
       runId: backendRunId,
+      sessionId: chatId,
     });
 
     if (!response?.ok) {
@@ -275,9 +350,44 @@ export const startAgentStream = async ({
 
     let assistantTextBuffer = '';
     let pendingNewAssistantBlock = false;
+    let lastSyncAt = 0;
+    let syncInFlight = false;
+    let forceSyncPending = false;
     let stepCounter = 1;
     let lastMainStepKey = '';
     let mainTitleAdded = false;
+    const seenGeneratedFileVersions = new Set<string>();
+
+    const requestSync = (force = false) => {
+      if (runId !== streamRunId) {
+        return;
+      }
+
+      const now = Date.now();
+      if (!force && now - lastSyncAt < STREAM_SYNC_INTERVAL_MS) {
+        return;
+      }
+
+      if (syncInFlight) {
+        forceSyncPending = forceSyncPending || force;
+        return;
+      }
+
+      syncInFlight = true;
+      lastSyncAt = now;
+
+      void syncChatToBackend(chatId)
+        .catch(() => {
+          void 0;
+        })
+        .finally(() => {
+          syncInFlight = false;
+          if (forceSyncPending) {
+            forceSyncPending = false;
+            requestSync(true);
+          }
+        });
+    };
 
     const appendDetailBlock = (detail: Omit<AssistantDetailBlock, 'id'>) => {
       store.dispatch(
@@ -354,6 +464,7 @@ export const startAgentStream = async ({
         messageVersion: 2,
         mainText: '',
         details: [],
+        isComplete: false,
       };
       store.dispatch(addPromptToChat({ chatId, content: newPrompt }));
     } else {
@@ -367,10 +478,19 @@ export const startAgentStream = async ({
           messageVersion: 2,
           mainText: '',
           details: [],
+          isComplete: false,
         };
         store.dispatch(addPromptToChat({ chatId, content: newPrompt }));
       }
     }
+
+    store.dispatch(
+      setContentCompletionById({
+        chatId,
+        contentId: assistantContentId,
+        isComplete: false,
+      }),
+    );
 
     store.dispatch(
       setAgentStreamState({
@@ -385,7 +505,10 @@ export const startAgentStream = async ({
       }
 
       const res = await reader?.read();
-      if (res?.done) break;
+      if (res?.done) {
+        streamCompleted = true;
+        break;
+      }
 
       buffer += decoder.decode(res?.value, { stream: true });
       const lines = buffer.split('\n\n');
@@ -454,6 +577,7 @@ export const startAgentStream = async ({
               messageVersion: 2,
               mainText: '',
               details: [],
+              isComplete: false,
             };
 
             store.dispatch(
@@ -466,6 +590,7 @@ export const startAgentStream = async ({
             );
             pendingNewAssistantBlock = false;
             assistantTextBuffer = '';
+            requestSync(true);
           }
 
           if (type === 'input_request') {
@@ -513,6 +638,7 @@ export const startAgentStream = async ({
               addPromptToChat({ chatId, content: newHumanPrompt }),
             );
             pendingNewAssistantBlock = true;
+            requestSync();
             continue;
           }
 
@@ -529,6 +655,7 @@ export const startAgentStream = async ({
               }),
             );
             assistantTextBuffer += safeDelta;
+            requestSync();
             continue;
           }
 
@@ -561,6 +688,7 @@ export const startAgentStream = async ({
                 timestamp: Date.now(),
               });
               assistantTextBuffer += safeThoughtDelta;
+              requestSync();
             }
             continue;
           }
@@ -568,14 +696,34 @@ export const startAgentStream = async ({
           if (type === 'files_generated') {
             const files = content;
             if (files && Array.isArray(files) && files.length > 0) {
+              const uniqueFiles = files.filter(file => {
+                const identity = getGeneratedFileIdentity(file);
+                if (!identity) {
+                  return false;
+                }
+
+                const versionKey = getGeneratedFileVersionKey(file);
+                if (seenGeneratedFileVersions.has(versionKey)) {
+                  return false;
+                }
+
+                seenGeneratedFileVersions.add(versionKey);
+                return true;
+              });
+
+              if (uniqueFiles.length === 0) {
+                continue;
+              }
+
               appendDetailBlock({
                 type: 'files_generated',
                 content: '',
-                files,
+                files: uniqueFiles,
                 timestamp: Date.now(),
               });
 
-              const pendingEditorFile = selectPreferredIntermediateFile(files);
+              const pendingEditorFile =
+                selectPreferredIntermediateFile(uniqueFiles);
 
               if (pendingEditorFile) {
                 const pendingPayload = {
@@ -632,7 +780,7 @@ export const startAgentStream = async ({
               assistantTextBuffer += prefix;
 
               const newAssets: ChatFile[] = [];
-              for (const file of files) {
+              for (const file of uniqueFiles) {
                 const isImage = /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(
                   file.name,
                 );
@@ -692,6 +840,7 @@ export const startAgentStream = async ({
                   }),
                 );
               }
+              requestSync();
             }
             continue;
           }
@@ -736,6 +885,7 @@ export const startAgentStream = async ({
                 timestamp: Date.now(),
               });
               assistantTextBuffer += safeResultDelta;
+              requestSync();
             }
             continue;
           }
@@ -758,6 +908,7 @@ export const startAgentStream = async ({
               timestamp: Date.now(),
             });
             assistantTextBuffer += errorDelta;
+            requestSync(true);
             continue;
           }
 
@@ -767,6 +918,21 @@ export const startAgentStream = async ({
         } catch (error) {
           void error;
         }
+      }
+    }
+
+    if (streamCompleted && runId === streamRunId) {
+      store.dispatch(
+        setContentCompletionById({
+          chatId,
+          contentId: assistantContentId,
+          isComplete: true,
+        }),
+      );
+      try {
+        await syncChatToBackend(chatId);
+      } catch (syncError) {
+        void syncError;
       }
     }
   } catch (error) {

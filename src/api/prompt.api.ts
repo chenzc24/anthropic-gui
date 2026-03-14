@@ -4,18 +4,21 @@ export interface PromptRequest extends ApiSettingOptions {
   prompt: string;
   signal?: AbortSignal;
   runId?: string;
+  sessionId?: string;
 }
 
 export const submitPrompt = async ({
   prompt,
   signal,
   runId,
+  sessionId,
 }: PromptRequest) => {
   // [MODIFIED] Use new agent endpoint for normal chat
   const requestBody = {
     prompt,
     stream: true,
     run_id: runId,
+    session_id: sessionId,
   };
 
   const requestOptions = {

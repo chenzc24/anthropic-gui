@@ -16,6 +16,12 @@ import { injectStyle } from 'react-toastify/dist/inject-style';
 import 'react-toastify/dist/ReactToastify.css';
 import { v4 as uuidv4 } from 'uuid';
 
+import {
+  appendChatSessionMessages,
+  fetchChatSessionDetail,
+  mapChatContentToRecordMessage,
+  mapSessionDetailToTreeItem,
+} from '@/api/chatSessions.api';
 import { uploadFile } from '@/api/files.api';
 import { NavigationContext } from '@/app/App';
 import { ROUTES } from '@/app/router/constants/routes';
@@ -24,6 +30,8 @@ import { selectChatById } from '@/redux/conversations/conversations.selectors';
 import {
   addHumanAttachmentsToContent,
   addPromptToChat,
+  saveChat,
+  updateChatContents,
   updateContentById,
 } from '@/redux/conversations/conversationsSlice';
 import { useAppDispatch, useAppSelector } from '@/redux/hooks';
@@ -50,6 +58,16 @@ const hasMeaningfulText = (value?: string): boolean => {
   if (!value) return false;
   const normalized = value.trim();
   return !['', '{}', '[]', 'null', 'undefined', 'None'].includes(normalized);
+};
+
+const hasPersistableContent = (content: ChatContent): boolean => {
+  if (content.type !== 'Human') {
+    return false;
+  }
+
+  const hasAttachments =
+    Array.isArray(content.humanAttachments) && content.humanAttachments.length > 0;
+  return hasMeaningfulText(content.text) || hasAttachments;
 };
 
 const stripKnownThoughtPrefix = (text: string): string =>
@@ -203,12 +221,105 @@ export const ChatSelected: React.FC = () => {
   const isLoading = isActiveStream && streamState.isLoading;
 
   const dispatch = useAppDispatch();
+  const [isHydratingChat, setIsHydratingChat] = useState(false);
+  const [chatHydrationError, setChatHydrationError] = useState('');
+  const [didHydrationAttemptFinish, setDidHydrationAttemptFinish] =
+    useState(false);
+  const syncedChatIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!chat) {
+    setIsHydratingChat(false);
+    setChatHydrationError('');
+    setDidHydrationAttemptFinish(false);
+  }, [chatId]);
+
+  useEffect(() => {
+    if (!chatId || (chat && Array.isArray(chat.content))) {
+      return;
+    }
+
+    let isActive = true;
+    setIsHydratingChat(true);
+    setChatHydrationError('');
+
+    const hydrateChatDetail = async () => {
+      try {
+        const detail = await fetchChatSessionDetail(chatId);
+        if (!isActive) {
+          return;
+        }
+
+        const mappedChat = mapSessionDetailToTreeItem(detail);
+        const mappedContent = mappedChat.content || [];
+
+        if (chat) {
+          dispatch(
+            updateChatContents({
+              chatId: chat.id,
+              contents: mappedContent,
+            }),
+          );
+        } else {
+          dispatch(
+            saveChat({
+              id: mappedChat.id,
+              name: mappedChat.name,
+              content: mappedContent,
+            }),
+          );
+        }
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+        setChatHydrationError(getErrorMessage(error));
+      } finally {
+        if (isActive) {
+          setIsHydratingChat(false);
+          setDidHydrationAttemptFinish(true);
+        }
+      }
+    };
+
+    void hydrateChatDetail();
+
+    return () => {
+      isActive = false;
+    };
+  }, [chatId, chat, dispatch]);
+
+  useEffect(() => {
+    if (!chat && didHydrationAttemptFinish && !isHydratingChat) {
       return navigate(ROUTES.Home);
     }
-  }, [chat, navigate]);
+  }, [chat, didHydrationAttemptFinish, isHydratingChat, navigate]);
+
+  useEffect(() => {
+    if (!chat?.id || !Array.isArray(chat.content)) {
+      return;
+    }
+
+    if (syncedChatIdsRef.current.has(chat.id)) {
+      return;
+    }
+
+    const messages = chat.content
+      .map((contentItem, sequence) => ({ contentItem, sequence }))
+      .filter(item => hasPersistableContent(item.contentItem))
+      .map(item =>
+        mapChatContentToRecordMessage(item.contentItem, item.sequence),
+      );
+
+    if (messages.length === 0) {
+      syncedChatIdsRef.current.add(chat.id);
+      return;
+    }
+
+    syncedChatIdsRef.current.add(chat.id);
+    void appendChatSessionMessages(chat.id, messages).catch(() => {
+      syncedChatIdsRef.current.delete(chat.id);
+    });
+  }, [chat?.id, chat?.content]);
 
   useEffect(() => {
     setEditorNavigationHandler(() => navigate(ROUTES.Editor));
@@ -453,6 +564,19 @@ export const ChatSelected: React.FC = () => {
         resetComposer();
         await submitAgentInput(valueForAgent);
       } else {
+        if (!chat?.id) {
+          return;
+        }
+
+        const previousContents = (chat.content || []).map(item => ({
+          ...item,
+          details: item.details ? [...item.details] : undefined,
+          assets: item.assets ? [...item.assets] : undefined,
+          humanAttachments: item.humanAttachments
+            ? [...item.humanAttachments]
+            : undefined,
+        }));
+
         const newHumanPrompt: ChatContent = {
           type: 'Human',
           text: composerValue,
@@ -468,6 +592,24 @@ export const ChatSelected: React.FC = () => {
         );
 
         resetComposer();
+
+        try {
+          await appendChatSessionMessages(chat.id, [
+            mapChatContentToRecordMessage(
+              newHumanPrompt,
+              previousContents.length,
+            ),
+          ]);
+        } catch (persistError) {
+          dispatch(
+            updateChatContents({
+              chatId: chat.id,
+              contents: previousContents,
+            }),
+          );
+          throw persistError;
+        }
+
         await generateResponse(newHumanPrompt);
       }
 
@@ -611,6 +753,14 @@ export const ChatSelected: React.FC = () => {
   return (
     <div className={styles.chatGeneralContainer}>
       <div className={styles.messagesScrollable} ref={containerRef}>
+        {isHydratingChat && !chat && (
+          <div className={styles.waitingPrompt}>
+            Loading chat from server...
+          </div>
+        )}
+        {!!chatHydrationError && !chat && (
+          <div className={styles.waitingPrompt}>{chatHydrationError}</div>
+        )}
         {visibleContent.map(contentItem => (
           <div className={styles.chatPromptContainer} key={contentItem.id}>
             <EditablePrompt
